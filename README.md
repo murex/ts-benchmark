@@ -92,11 +92,22 @@ Official adapter subproject:
 python -m pip install -e ./official_adapters
 ```
 
+TimeGrad backend dependencies for the official adapter package:
+
+```bash
+python -m pip install -e ./official_adapters[timegrad]
+```
+
 The core `ts-benchmark` package is intentionally installable without PyTorch.
 That keeps benchmark browsing, config loading, dataset inspection, metrics,
 results, notebook workflows, and CPU-only built-in baselines lightweight.
 Install the optional `torch` extra only when you need PyTorch-backed helpers or
 device-aware acceleration in the core package.
+Likewise, install official adapter backend extras only when you actually want
+to execute those adapter models in a given environment. In notebook workflows,
+the recommended path is often to keep the main notebook env light and use
+`ts_benchmark.notebook.provision_adapter_venv(...)` to create a dedicated
+subprocess environment for heavyweight adapters such as TimeGrad.
 
 The repo is structured as a small monorepo:
 
@@ -197,7 +208,12 @@ The following are importable but not part of the stable public API:
 
 ```python
 from ts_benchmark.benchmark import list_benchmark_summaries
-from ts_benchmark.notebook import dataset_frame, entrypoint_model, run_benchmark
+from ts_benchmark.notebook import (
+    dataset_frame,
+    entrypoint_model,
+    provision_adapter_venv,
+    run_benchmark,
+)
 
 benchmarks = list_benchmark_summaries()
 
@@ -214,6 +230,17 @@ run = run_benchmark(
 metrics = run.metrics()
 band = run.scenario_band("my_local_model", evaluation_window=0, asset=0)
 dataset = dataset_frame("smoke_test").frame
+```
+
+For dataset-first notebook workflows that rerun heavyweight official adapters,
+you can provision a dedicated subprocess env instead of installing those
+dependencies into the main notebook env:
+
+```python
+timegrad_env = provision_adapter_venv(
+    "outputs/venvs/timegrad",
+    "pytorchts_timegrad",
+)
 ```
 
 ---

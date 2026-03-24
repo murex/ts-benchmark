@@ -43,11 +43,34 @@ environment. The adapters include compatibility patches for published
 
 The benchmark supports per-model external execution. A practical split is:
 
-- main benchmark env: built-ins, `pytorchts_timegrad`, active development models
+- main benchmark env: built-ins, notebook work, active development models
+- dedicated `timegrad` env: `pytorchts_timegrad`
 - dedicated `eqbench-mxnet` env: `gluonts_deepvar`, `gluonts_gpvar`
 
-That keeps the GluonTS/MXNet stack isolated while still exposing those
-models as normal benchmark plugins.
+That keeps heavyweight adapter stacks isolated while still exposing those
+models as normal benchmark plugins. The notebook API can provision the
+TimeGrad env for you with `ts_benchmark.notebook.provision_adapter_venv(...)`.
+
+Example TimeGrad model block:
+
+```json
+{
+  "name": "timegrad_external",
+  "reference": {
+    "kind": "plugin",
+    "value": "pytorchts_timegrad"
+  },
+  "execution": {
+    "mode": "subprocess",
+    "venv": "timegrad"
+  },
+  "params": {
+    "epochs": 1,
+    "batch_size": 8
+  },
+  "pipeline": "raw"
+}
+```
 
 Example model block:
 
