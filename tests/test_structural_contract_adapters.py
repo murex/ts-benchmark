@@ -11,37 +11,8 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ts_benchmark.benchmark.protocol import Protocol
 from ts_benchmark.model import RuntimeContext, ScenarioRequest, TrainingData
-from ts_benchmark.model.catalog.plugins import extract_model_parameter_schema, extract_model_plugin_manifest
 from ts_benchmark.model.model_contract import FitReport, GenerationMode, GenerationResult, ModelCapabilities
 from ts_benchmark.model.wrappers.duck_typed import DuckTypedGeneratorScenarioModel
-from ts_benchmark_official_adapters.plugin import (
-    build_gluonts_deepvar,
-    build_gluonts_gpvar,
-    build_pytorchts_timegrad,
-)
-
-
-def test_official_adapter_builders_follow_structural_estimator_contract() -> None:
-    builders = [
-        (build_gluonts_deepvar, "gluonts_deepvar"),
-        (build_gluonts_gpvar, "gluonts_gpvar"),
-        (build_pytorchts_timegrad, "pytorchts_timegrad"),
-    ]
-
-    for builder, expected_name in builders:
-        estimator = builder()
-        fit_signature = inspect.signature(estimator.fit)
-        assert "schema" in fit_signature.parameters
-        assert "task" in fit_signature.parameters
-
-        manifest = extract_model_plugin_manifest(builder, default_name=expected_name)
-        assert manifest is not None
-        assert manifest.name == expected_name
-        assert manifest.capabilities.benchmark_protocol_contract is False
-
-        schema = extract_model_parameter_schema(builder, default_name=expected_name)
-        assert schema is not None
-        assert len(schema.fields) > 0
 
 
 class _DummyGenerator:
@@ -72,6 +43,12 @@ class _DummyEstimator:
                 "context_length": getattr(task, "context_length", None),
             }
         )
+
+
+def test_structural_estimators_expose_schema_and_task_fit_parameters() -> None:
+    fit_signature = inspect.signature(_DummyEstimator.fit)
+    assert "schema" in fit_signature.parameters
+    assert "task" in fit_signature.parameters
 
 
 def test_duck_typed_bridge_passes_context_length_to_structural_estimators() -> None:

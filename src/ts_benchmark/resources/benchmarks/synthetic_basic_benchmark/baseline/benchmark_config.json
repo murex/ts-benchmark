@@ -1,0 +1,423 @@
+{
+  "version": "1.0",
+  "benchmark": {
+    "name": "synthetic basic benchmark",
+    "description": "Baseline synthetic benchmark for six series on the default stochastic-volatility regime-switching dataset.",
+    "dataset": {
+      "name": "synthetic_default_6_series",
+      "description": "Default six-series synthetic daily return panel with stochastic volatility, leverage effects, heavy tails, and regime switching.",
+      "provider": {
+        "kind": "synthetic",
+        "config": {
+          "generator": "regime_switching_factor_sv",
+          "params": {
+            "n_assets": 6,
+            "seed": 21
+          }
+        }
+      },
+      "schema": {
+        "layout": "tensor",
+        "time_column": null,
+        "series_id_columns": [],
+        "target_columns": [],
+        "feature_columns": [],
+        "static_feature_columns": [],
+        "frequency": "B"
+      },
+      "semantics": {
+        "target_kind": "returns"
+      },
+      "metadata": {
+        "n_assets": 6,
+        "profile": "default"
+      }
+    },
+    "protocol": {
+      "train_size": 240,
+      "test_size": 60,
+      "context_length": 20,
+      "horizon": 5,
+      "generation_mode": "forecast",
+      "eval_stride": 10,
+      "train_stride": 1,
+      "n_model_scenarios": 32,
+      "n_reference_scenarios": 64
+    },
+    "metrics": [
+      {
+        "name": "crps",
+        "description": "Continuous ranked probability score against realized future paths.",
+        "category": "distribution",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": true,
+          "requires_reference_scenarios": false,
+          "multivariate_only": false,
+          "synthetic_only": false
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "energy_score",
+        "description": "Multivariate energy score against realized future paths.",
+        "category": "distribution",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": true,
+          "requires_reference_scenarios": false,
+          "multivariate_only": false,
+          "synthetic_only": false
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "predictive_mean_mse",
+        "description": "Mean squared error of the predictive mean against realized future paths.",
+        "category": "point",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": true,
+          "requires_reference_scenarios": false,
+          "multivariate_only": false,
+          "synthetic_only": false
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "coverage_90_error",
+        "description": "Absolute error of 90% predictive interval coverage against realized future paths.",
+        "category": "calibration",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {
+          "alpha": 0.1,
+          "nominal_coverage": 0.9
+        },
+        "requirements": {
+          "requires_realized_path": true,
+          "requires_reference_scenarios": false,
+          "multivariate_only": false,
+          "synthetic_only": false
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "mean_error",
+        "description": "Absolute error in marginal means against reference scenarios.",
+        "category": "moment",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "volatility_error",
+        "description": "Absolute error in marginal volatilities against reference scenarios.",
+        "category": "moment",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "skew_error",
+        "description": "Absolute error in marginal skewness against reference scenarios.",
+        "category": "moment",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "excess_kurtosis_error",
+        "description": "Absolute error in marginal excess kurtosis against reference scenarios.",
+        "category": "moment",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "cross_correlation_error",
+        "description": "Absolute error in cross-asset correlation structure against reference scenarios.",
+        "category": "dependence",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": true,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "autocorrelation_error",
+        "description": "Absolute error in path autocorrelation against reference scenarios.",
+        "category": "dependence",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {
+          "lags": [
+            1,
+            2,
+            5
+          ]
+        },
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "squared_autocorrelation_error",
+        "description": "Absolute error in squared-path autocorrelation against reference scenarios.",
+        "category": "dependence",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {
+          "lags": [
+            1,
+            2,
+            5
+          ]
+        },
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "var_95_error",
+        "description": "Absolute error in 95% value-at-risk against reference scenarios.",
+        "category": "tail",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {
+          "alpha": 0.05
+        },
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "es_95_error",
+        "description": "Absolute error in 95% expected shortfall against reference scenarios.",
+        "category": "tail",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {
+          "alpha": 0.05
+        },
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "max_drawdown_error",
+        "description": "Absolute error in expected max drawdown against reference scenarios.",
+        "category": "tail",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {},
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      },
+      {
+        "name": "mmd_rbf",
+        "description": "Maximum mean discrepancy with an RBF kernel against reference scenarios.",
+        "category": "distribution",
+        "direction": "minimize",
+        "target_value": null,
+        "params": {
+          "kernel": "rbf"
+        },
+        "requirements": {
+          "requires_realized_path": false,
+          "requires_reference_scenarios": true,
+          "multivariate_only": false,
+          "synthetic_only": true
+        },
+        "granularity": "per_window",
+        "aggregation": "mean"
+      }
+    ],
+    "models": [
+      {
+        "name": "historical_bootstrap",
+        "description": "Historical bootstrap baseline.",
+        "reference": {
+          "kind": "builtin",
+          "value": "historical_bootstrap"
+        },
+        "params": {
+          "block_size": 5
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        },
+        "metadata": {}
+      },
+      {
+        "name": "historical_sv_bootstrap",
+        "description": "Historical stochastic-volatility bootstrap baseline.",
+        "reference": {
+          "kind": "builtin",
+          "value": "stochastic_volatility_bootstrap"
+        },
+        "params": {
+          "ewma_lambda": 0.97,
+          "block_size": 5,
+          "vol_of_vol": 0.1,
+          "long_run_blend": 0.02
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        },
+        "metadata": {}
+      },
+      {
+        "name": "pytorchts_timegrad",
+        "description": "Official TimeGrad plugin model.",
+        "reference": {
+          "kind": "plugin",
+          "value": "pytorchts_timegrad"
+        },
+        "params": {
+          "hidden_size": 16,
+          "num_layers": 1,
+          "dropout_rate": 0.1,
+          "num_inference_steps": 8,
+          "trainer_kwargs": {
+            "max_epochs": 1
+          }
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        },
+        "metadata": {}
+      }
+    ]
+  },
+  "run": {
+    "name": null,
+    "description": null,
+    "seed": 21,
+    "execution": {
+      "device": null,
+      "scheduler": "auto",
+      "model_execution": {
+        "mode": "inprocess",
+        "venv": null,
+        "python": null,
+        "cwd": null,
+        "pythonpath": [],
+        "env": {}
+      }
+    },
+    "tracking": {
+      "mlflow": {
+        "enabled": false,
+        "tracking_uri": null,
+        "experiment_name": "ts-benchmark",
+        "run_name": null,
+        "tags": {},
+        "log_artifacts": true,
+        "log_model_info": true,
+        "log_diagnostics": true,
+        "log_scenarios": false
+      }
+    },
+    "output": {
+      "output_dir": null,
+      "keep_scenarios": false,
+      "save_scenarios": false,
+      "save_model_info": true,
+      "save_summary": true
+    },
+    "metadata": {}
+  },
+  "diagnostics": {
+    "save_model_debug_artifacts": true,
+    "save_distribution_summary": true,
+    "save_per_window_metrics": true,
+    "functional_smoke": {
+      "enabled": true,
+      "finite_required": true,
+      "mean_abs_error_max": null,
+      "std_ratio_min": null,
+      "std_ratio_max": null,
+      "crps_max": null,
+      "energy_score_max": null,
+      "cross_correlation_error_max": null
+    }
+  }
+}

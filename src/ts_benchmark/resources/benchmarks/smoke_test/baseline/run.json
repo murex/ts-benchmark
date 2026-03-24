@@ -1,0 +1,57 @@
+{
+  "name": null,
+  "description": null,
+  "seed": 21,
+  "device": "cuda:0",
+  "scheduler": "sequential",
+  "output": {
+    "output_dir": "/tmp/tsb_smoke_with_scenarios",
+    "keep_scenarios": true,
+    "save_scenarios": true,
+    "save_model_info": true,
+    "save_summary": true
+  },
+  "tracking": {
+    "mlflow": {
+      "enabled": false,
+      "tracking_uri": null,
+      "experiment_name": "ts-benchmark",
+      "run_name": null,
+      "tags": {},
+      "log_artifacts": true,
+      "log_model_info": true,
+      "log_diagnostics": true,
+      "log_scenarios": false
+    }
+  },
+  "metadata": {},
+  "status": "succeeded",
+  "requested_at": "2026-03-24T12:17:01.502086+00:00",
+  "started_at": "2026-03-24T12:17:01.502086+00:00",
+  "finished_at": "2026-03-24T12:17:12.282318+00:00",
+  "resolved_output_dir": "/tmp/tsb_smoke_with_scenarios",
+  "resolved_execution": {
+    "scheduler": "sequential",
+    "execution_mode": "sequential",
+    "requested_device": "cuda:0",
+    "resolved_devices": [
+      "cuda:0"
+    ],
+    "assigned_devices": [
+      {
+        "model_name": "historical_bootstrap",
+        "device": "cuda:0"
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "device": "cuda:0"
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "device": "cuda:0"
+      }
+    ],
+    "parallel_workers": 1
+  },
+  "tracking_result": null
+}

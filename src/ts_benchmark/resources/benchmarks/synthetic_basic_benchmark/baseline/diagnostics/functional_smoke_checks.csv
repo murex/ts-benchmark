@@ -1,0 +1,4 @@
+model,check,status,observed,threshold,comparator,message
+historical_bootstrap,finite_required,pass,True,True,,All generated samples must be finite.
+historical_sv_bootstrap,finite_required,pass,True,True,,All generated samples must be finite.
+pytorchts_timegrad,finite_required,pass,True,True,,All generated samples must be finite.

@@ -1,0 +1,24 @@
+{
+  "benchmark_id": "smoke_test",
+  "generated_at": "2026-03-24T12:17:12.282318+00:00",
+  "models": [
+    "historical_bootstrap",
+    "historical_sv_bootstrap",
+    "pytorchts_timegrad"
+  ],
+  "artifacts": [
+    "benchmark_config.json",
+    "effective_benchmark.json",
+    "metrics.csv",
+    "model_results.json",
+    "ranks.csv",
+    "run.json",
+    "scenarios.npz",
+    "summary.json",
+    "diagnostics/distribution_summary.csv",
+    "diagnostics/distribution_summary_by_asset.csv",
+    "diagnostics/functional_smoke_checks.csv",
+    "diagnostics/functional_smoke_summary.csv",
+    "diagnostics/per_window_metrics.csv"
+  ]
+}

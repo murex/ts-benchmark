@@ -1,0 +1,4 @@
+model,dataset_name,dataset_source,device,has_reference_scenarios,train_size,test_size,context_length,horizon,generation_mode,eval_stride,train_stride,n_model_scenarios,n_reference_scenarios,crps,energy_score,predictive_mean_mse,coverage_90_error,mean_error,volatility_error,skew_error,excess_kurtosis_error,cross_correlation_error,autocorrelation_error,squared_autocorrelation_error,var_95_error,es_95_error,max_drawdown_error,mmd_rbf,average_rank
+historical_bootstrap,synthetic_basic_6_series,synthetic,cuda:0,True,120,24,8,2,forecast,4,1,8,16,3.0,3.0,3.0,1.0,2.0,1.0,1.0,2.0,2.0,1.0,1.0,2.0,1.0,1.0,1.0,1.6666666666666667
+pytorchts_timegrad,synthetic_basic_6_series,synthetic,cuda:0,True,120,24,8,2,forecast,4,1,8,16,1.0,1.0,1.0,3.0,1.0,2.0,2.0,3.0,3.0,2.0,2.0,1.0,2.0,2.0,2.0,1.8666666666666667
+historical_sv_bootstrap,synthetic_basic_6_series,synthetic,cuda:0,True,120,24,8,2,forecast,4,1,8,16,2.0,2.0,2.0,2.0,3.0,3.0,3.0,1.0,1.0,3.0,3.0,3.0,3.0,3.0,3.0,2.466666666666667

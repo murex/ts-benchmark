@@ -20,9 +20,9 @@ gluonts-mx = [
   "mxnet<2",
 ]
 timegrad = [
-  "pandas>=2.0",
   "gluonts>=0.14",
   "pytorchts>=0.6,<0.7",
+  "lightning>=2,<3",
   "diffusers>=0.24",
 ]
 all = [
@@ -30,6 +30,7 @@ all = [
   "gluonts>=0.14",
   "mxnet<2",
   "pytorchts>=0.6,<0.7",
+  "lightning>=2,<3",
   "diffusers>=0.24",
 ]
 

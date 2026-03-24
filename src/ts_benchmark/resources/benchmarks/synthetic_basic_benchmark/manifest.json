@@ -2,5 +2,5 @@
   "benchmark_id": "synthetic_basic_benchmark",
   "display_name": "synthetic_basic_benchmark",
   "description": "Baseline synthetic benchmark for six series on the default stochastic-volatility regime-switching dataset, with built-in baselines and the official TimeGrad adapter.",
-  "has_baseline": false
+  "has_baseline": true
 }

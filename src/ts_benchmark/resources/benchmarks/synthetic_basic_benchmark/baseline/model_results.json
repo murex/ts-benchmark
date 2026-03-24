@@ -1,0 +1,963 @@
+[
+  {
+    "model_name": "historical_bootstrap",
+    "description": "Historical bootstrap baseline.",
+    "reference": {
+      "kind": "builtin",
+      "value": "historical_bootstrap"
+    },
+    "params": {
+      "block_size": 5
+    },
+    "execution": {
+      "requested": null,
+      "assigned_device": "cuda:0",
+      "runtime_device": "cuda:0",
+      "resolved_device": "cuda:0",
+      "metadata": {}
+    },
+    "pipeline": {
+      "name": "raw",
+      "steps": []
+    },
+    "metadata": {},
+    "plugin_info": {
+      "name": "historical_bootstrap",
+      "source": "builtin",
+      "target": "ts_benchmark.model.builtins.historical_bootstrap:HistoricalBootstrapModel",
+      "package": "ts-benchmark",
+      "package_version": "0.4.0",
+      "manifest": {
+        "name": "historical_bootstrap",
+        "display_name": "Historical bootstrap",
+        "version": "0.4.0",
+        "family": "bootstrap",
+        "description": "Simple historical block bootstrap over multivariate return vectors.",
+        "runtime_device_hints": [
+          "cpu",
+          "cuda",
+          "mps"
+        ],
+        "supported_dataset_sources": [
+          "synthetic",
+          "csv",
+          "parquet"
+        ],
+        "required_input": "returns",
+        "default_pipeline": "raw",
+        "required_pipeline": null,
+        "tags": [
+          "baseline",
+          "historical",
+          "bootstrap"
+        ],
+        "notes": "Resamples empirical return vectors and preserves same-date cross-sectional dependence.",
+        "capabilities": {
+          "multivariate": true,
+          "probabilistic_sampling": true,
+          "benchmark_protocol_contract": true,
+          "explicit_preprocessing": true,
+          "uses_benchmark_device": true
+        },
+        "manifest_source": "builtin"
+      }
+    },
+    "runtime_manifest": null,
+    "fitted_model_info": {
+      "name": "historical_bootstrap",
+      "class": "HistoricalBootstrapModel",
+      "block_size": 5,
+      "runtime_device": "cuda:0",
+      "resolved_device": "cuda:0"
+    },
+    "metric_results": [
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "crps",
+        "value": 0.009663361563643669,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "energy_score",
+        "value": 0.06672868294326285,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "predictive_mean_mse",
+        "value": 0.00029227636138663595,
+        "direction": "minimize",
+        "category": "point",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "coverage_90_error",
+        "value": 0.10555555555555562,
+        "direction": "minimize",
+        "category": "calibration",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "mean_error",
+        "value": 0.0007591780786544148,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "volatility_error",
+        "value": 0.0021882774337638315,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "skew_error",
+        "value": 0.2600321651393895,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "excess_kurtosis_error",
+        "value": 0.8328896177383998,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "cross_correlation_error",
+        "value": 0.08703480641538915,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "autocorrelation_error",
+        "value": 0.0364801592032962,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "squared_autocorrelation_error",
+        "value": 0.019852491384205657,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "var_95_error",
+        "value": 0.0025778057562909416,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "es_95_error",
+        "value": 0.004426644177843375,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "max_drawdown_error",
+        "value": 0.0015951957533939833,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "mmd_rbf",
+        "value": 0.011880245449652826,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      }
+    ],
+    "metric_rankings": [
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "crps",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "energy_score",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "predictive_mean_mse",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "coverage_90_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "mean_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "volatility_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "skew_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "excess_kurtosis_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "cross_correlation_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "autocorrelation_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "squared_autocorrelation_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "var_95_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "es_95_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "max_drawdown_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_bootstrap",
+        "metric_name": "mmd_rbf",
+        "rank": 2.0
+      }
+    ],
+    "average_rank": 1.6,
+    "scenario_output": null
+  },
+  {
+    "model_name": "historical_sv_bootstrap",
+    "description": "Historical stochastic-volatility bootstrap baseline.",
+    "reference": {
+      "kind": "builtin",
+      "value": "stochastic_volatility_bootstrap"
+    },
+    "params": {
+      "ewma_lambda": 0.97,
+      "block_size": 5,
+      "vol_of_vol": 0.1,
+      "long_run_blend": 0.02
+    },
+    "execution": {
+      "requested": null,
+      "assigned_device": "cuda:1",
+      "runtime_device": "cuda:1",
+      "resolved_device": "cuda:1",
+      "metadata": {}
+    },
+    "pipeline": {
+      "name": "raw",
+      "steps": []
+    },
+    "metadata": {},
+    "plugin_info": {
+      "name": "stochastic_volatility_bootstrap",
+      "source": "builtin",
+      "target": "ts_benchmark.model.builtins.stochastic_vol_bootstrap:StochasticVolatilityBootstrapModel",
+      "package": "ts-benchmark",
+      "package_version": "0.4.0",
+      "manifest": {
+        "name": "stochastic_volatility_bootstrap",
+        "display_name": "Historical SV bootstrap",
+        "version": "0.4.0",
+        "family": "bootstrap",
+        "description": "Historical residual bootstrap with recursively simulated stochastic volatility.",
+        "runtime_device_hints": [
+          "cpu",
+          "cuda",
+          "mps"
+        ],
+        "supported_dataset_sources": [
+          "synthetic",
+          "csv",
+          "parquet"
+        ],
+        "required_input": "returns",
+        "default_pipeline": "raw",
+        "required_pipeline": null,
+        "tags": [
+          "baseline",
+          "historical",
+          "bootstrap",
+          "stochastic-volatility"
+        ],
+        "notes": "Uses EWMA volatility scaling and bootstrapped standardized residual vectors.",
+        "capabilities": {
+          "multivariate": true,
+          "probabilistic_sampling": true,
+          "benchmark_protocol_contract": true,
+          "explicit_preprocessing": true,
+          "uses_benchmark_device": true
+        },
+        "manifest_source": "builtin"
+      }
+    },
+    "runtime_manifest": null,
+    "fitted_model_info": {
+      "name": "historical_sv_bootstrap",
+      "class": "StochasticVolatilityBootstrapModel",
+      "block_size": 5,
+      "runtime_device": "cuda:1",
+      "resolved_device": "cuda:1",
+      "vol_of_vol": 0.1,
+      "ewma_lambda": 0.97
+    },
+    "metric_results": [
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "crps",
+        "value": 0.01000937651766342,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "energy_score",
+        "value": 0.06953431412935036,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "predictive_mean_mse",
+        "value": 0.00031202203569212565,
+        "direction": "minimize",
+        "category": "point",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "coverage_90_error",
+        "value": 0.07777777777777783,
+        "direction": "minimize",
+        "category": "calibration",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "mean_error",
+        "value": 0.000582909106607386,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "volatility_error",
+        "value": 0.0016051210197540885,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "skew_error",
+        "value": 0.373772838615998,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "excess_kurtosis_error",
+        "value": 1.4741905780224454,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "cross_correlation_error",
+        "value": 0.0727006596798607,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "autocorrelation_error",
+        "value": 0.05550794643107661,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "squared_autocorrelation_error",
+        "value": 0.10357195782693293,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "var_95_error",
+        "value": 0.0032410456561216485,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "es_95_error",
+        "value": 0.003925836938085709,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "max_drawdown_error",
+        "value": 0.0019374480837114725,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "mmd_rbf",
+        "value": 0.009177234655004862,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      }
+    ],
+    "metric_rankings": [
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "crps",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "energy_score",
+        "rank": 3.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "predictive_mean_mse",
+        "rank": 3.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "coverage_90_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "mean_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "volatility_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "skew_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "excess_kurtosis_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "cross_correlation_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "autocorrelation_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "squared_autocorrelation_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "var_95_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "es_95_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "max_drawdown_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "historical_sv_bootstrap",
+        "metric_name": "mmd_rbf",
+        "rank": 1.0
+      }
+    ],
+    "average_rank": 2.0,
+    "scenario_output": null
+  },
+  {
+    "model_name": "pytorchts_timegrad",
+    "description": "Official TimeGrad plugin model.",
+    "reference": {
+      "kind": "plugin",
+      "value": "pytorchts_timegrad"
+    },
+    "params": {
+      "hidden_size": 16,
+      "num_layers": 1,
+      "dropout_rate": 0.1,
+      "num_inference_steps": 8,
+      "trainer_kwargs": {
+        "max_epochs": 1
+      }
+    },
+    "execution": {
+      "requested": null,
+      "assigned_device": "cuda:2",
+      "runtime_device": "cuda:2",
+      "resolved_device": null,
+      "metadata": {}
+    },
+    "pipeline": {
+      "name": "raw",
+      "steps": []
+    },
+    "metadata": {},
+    "plugin_info": {
+      "name": "pytorchts_timegrad",
+      "source": "entry_point",
+      "target": "ts_benchmark_official_adapters.plugin:build_pytorchts_timegrad",
+      "package": "ts-benchmark-official-adapters",
+      "package_version": "0.1.0",
+      "manifest": {
+        "name": "pytorchts_timegrad",
+        "display_name": "pytorch-ts TimeGrad",
+        "version": "0.1.0",
+        "family": "diffusion",
+        "description": "External adapter around pytorch-ts TimeGrad for multivariate probabilistic forecasting.",
+        "runtime_device_hints": [
+          "cpu",
+          "cuda"
+        ],
+        "supported_dataset_sources": [
+          "synthetic",
+          "csv",
+          "parquet"
+        ],
+        "required_input": "returns",
+        "default_pipeline": "raw",
+        "required_pipeline": null,
+        "tags": [
+          "official",
+          "pytorchts",
+          "timegrad",
+          "multivariate",
+          "diffusion"
+        ],
+        "notes": "Requires the optional pytorch-ts TimeGrad dependencies; adapter consumes forecast horizon and context length through the structural task contract.",
+        "capabilities": {
+          "multivariate": true,
+          "probabilistic_sampling": true,
+          "benchmark_protocol_contract": false,
+          "explicit_preprocessing": true,
+          "uses_benchmark_device": true
+        },
+        "manifest_source": "entry_point"
+      }
+    },
+    "runtime_manifest": null,
+    "fitted_model_info": {
+      "name": "pytorchts_timegrad",
+      "class": "DuckTypedGeneratorScenarioModel",
+      "adapter": "duck_typed_estimator",
+      "wrapped_estimator_class": "PytorchTsTimeGradAdapter",
+      "wrapped_generator_class": "_TimeGradGenerator",
+      "capabilities": {
+        "supported_modes": [
+          "forecast"
+        ],
+        "supports_multivariate_targets": true,
+        "supports_known_covariates": false,
+        "supports_observed_covariates": false,
+        "supports_static_covariates": false,
+        "supports_constraints": false
+      },
+      "fit_report": {
+        "fit_time_sec": 3.8229083362966776,
+        "diagnostics": {
+          "backend": "pytorchts",
+          "config": {
+            "hidden_size": 16,
+            "num_layers": 1,
+            "dropout_rate": 0.1,
+            "lags_seq": [
+              1
+            ],
+            "num_inference_steps": 8,
+            "scaling": "mean",
+            "beta_end": 0.1,
+            "trainer_kwargs": {
+              "max_epochs": 1
+            },
+            "estimator_kwargs": {},
+            "scheduler_factory": null
+          },
+          "prediction_length": 5,
+          "context_length": 20,
+          "target_dim": 6,
+          "freq": "B",
+          "runtime_device_hint": "cuda:2",
+          "resolved_device": "cuda:2",
+          "training_series_count": 1
+        }
+      }
+    },
+    "metric_results": [
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "crps",
+        "value": 0.01003114362393865,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "energy_score",
+        "value": 0.06938235932055094,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "predictive_mean_mse",
+        "value": 0.00029959479095165165,
+        "direction": "minimize",
+        "category": "point",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "coverage_90_error",
+        "value": 0.21111111111111114,
+        "direction": "minimize",
+        "category": "calibration",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "mean_error",
+        "value": 0.000762270863740646,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "volatility_error",
+        "value": 0.005107545044182236,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "skew_error",
+        "value": 0.11992485058333942,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "excess_kurtosis_error",
+        "value": 0.7092391582632954,
+        "direction": "minimize",
+        "category": "moment",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "cross_correlation_error",
+        "value": 0.5437326431141137,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "autocorrelation_error",
+        "value": 0.03009698397950174,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "squared_autocorrelation_error",
+        "value": 0.03583360527973531,
+        "direction": "minimize",
+        "category": "dependence",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "var_95_error",
+        "value": 0.008025819548726268,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "es_95_error",
+        "value": 0.0100987251470975,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "max_drawdown_error",
+        "value": 0.006087469201334521,
+        "direction": "minimize",
+        "category": "tail",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "mmd_rbf",
+        "value": 0.05016411785818753,
+        "direction": "minimize",
+        "category": "distribution",
+        "granularity": "per_window",
+        "aggregation": "mean",
+        "metadata": {}
+      }
+    ],
+    "metric_rankings": [
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "crps",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "energy_score",
+        "rank": 2.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "predictive_mean_mse",
+        "rank": 2.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "coverage_90_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "mean_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "volatility_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "skew_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "excess_kurtosis_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "cross_correlation_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "autocorrelation_error",
+        "rank": 1.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "squared_autocorrelation_error",
+        "rank": 2.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "var_95_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "es_95_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "max_drawdown_error",
+        "rank": 3.0
+      },
+      {
+        "model_name": "pytorchts_timegrad",
+        "metric_name": "mmd_rbf",
+        "rank": 3.0
+      }
+    ],
+    "average_rank": 2.4,
+    "scenario_output": null
+  }
+]

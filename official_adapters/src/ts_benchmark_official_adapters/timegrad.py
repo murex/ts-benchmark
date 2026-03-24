@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import importlib
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable, Iterable
 
@@ -48,6 +50,21 @@ class PytorchTsTimeGradConfig:
     trainer_kwargs: dict[str, Any] = field(default_factory=lambda: {"max_epochs": 5})
     estimator_kwargs: dict[str, Any] = field(default_factory=dict)
     scheduler_factory: Callable[["PytorchTsTimeGradConfig"], Any] | None = None
+
+
+def _ensure_gluonts_distribution_output_compat() -> None:
+    """Bridge GluonTS module renames expected by older `pytorchts` releases."""
+
+    legacy_name = "gluonts.torch.modules.distribution_output"
+    if legacy_name in sys.modules:
+        return
+    try:
+        importlib.import_module(legacy_name)
+        return
+    except ModuleNotFoundError:
+        pass
+    compat_module = importlib.import_module("gluonts.torch.distributions.distribution_output")
+    sys.modules[legacy_name] = compat_module
 
 
 class _TimeGradGenerator:
@@ -224,6 +241,7 @@ class PytorchTsTimeGradAdapter:
         target_dim = int(getattr(schema, "target_dim"))
         freq = getattr(schema, "freq", None) or "B"
         batches = collect_training_batches(train, target_dim=target_dim)
+        _ensure_gluonts_distribution_output_compat()
 
         try:
             from pts.model.time_grad import TimeGradEstimator  # type: ignore
