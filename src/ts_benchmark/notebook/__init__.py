@@ -2,6 +2,7 @@
 
 from .api import (
     BenchmarkDatasetView,
+    NotebookAdapterEnv,
     NotebookDatasetSpec,
     NotebookModelSpec,
     NotebookRun,
@@ -10,6 +11,7 @@ from .api import (
     entrypoint_model,
     load_run,
     parquet_dataset,
+    provision_adapter_venv,
     run_benchmark,
     show,
     tabular_dataset,
@@ -17,6 +19,7 @@ from .api import (
 
 __all__ = [
     "BenchmarkDatasetView",
+    "NotebookAdapterEnv",
     "NotebookDatasetSpec",
     "NotebookModelSpec",
     "csv_dataset",
@@ -25,6 +28,7 @@ __all__ = [
     "entrypoint_model",
     "load_run",
     "parquet_dataset",
+    "provision_adapter_venv",
     "run_benchmark",
     "show",
     "tabular_dataset",

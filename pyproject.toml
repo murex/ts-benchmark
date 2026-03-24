@@ -12,7 +12,6 @@ dependencies = [
   "numpy>=1.24",
   "pandas>=2.0",
   "scipy>=1.10",
-  "torch>=2.1",
   "jsonschema>=4.18",
 ]
 
@@ -29,11 +28,15 @@ where = ["src"]
   "benchmarks/*/manifest.json",
   "benchmarks/*/baseline/*.json",
   "benchmarks/*/baseline/*.csv",
+  "benchmarks/*/baseline/*.npz",
   "benchmarks/*/baseline/diagnostics/*.csv",
   "sample_data/*.csv",
 ]
 
 [project.optional-dependencies]
+torch = [
+  "torch>=2.1",
+]
 ui = [
   "streamlit>=1.31",
 ]
@@ -41,6 +44,13 @@ tracking = [
   "mlflow>=2.12",
 ]
 notebook = [
+  "ipython>=8.0",
+  "matplotlib>=3.8",
+]
+all = [
+  "torch>=2.1",
+  "streamlit>=1.31",
+  "mlflow>=2.12",
   "ipython>=8.0",
   "matplotlib>=3.8",
 ]

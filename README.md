@@ -68,6 +68,12 @@ From the project root:
 python -m pip install -e .
 ```
 
+Optional PyTorch-backed helpers:
+
+```bash
+python -m pip install -e .[torch]
+```
+
 Optional UI dependencies:
 
 ```bash
@@ -85,6 +91,12 @@ Official adapter subproject:
 ```bash
 python -m pip install -e ./official_adapters
 ```
+
+The core `ts-benchmark` package is intentionally installable without PyTorch.
+That keeps benchmark browsing, config loading, dataset inspection, metrics,
+results, notebook workflows, and CPU-only built-in baselines lightweight.
+Install the optional `torch` extra only when you need PyTorch-backed helpers or
+device-aware acceleration in the core package.
 
 The repo is structured as a small monorepo:
 

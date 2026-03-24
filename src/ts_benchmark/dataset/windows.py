@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
-import torch
-from torch.utils.data import Dataset
+
+try:
+    import torch
+    from torch.utils.data import Dataset
+except Exception:  # pragma: no cover - torch is optional for the core package
+    torch = None
+
+    class Dataset:  # type: ignore[no-redef]
+        """Fallback base class when torch is unavailable."""
+
+        pass
 
 
 def rolling_context_future_pairs(
@@ -47,6 +58,11 @@ class ForecastWindowDataset(Dataset):
     """PyTorch dataset over precomputed context/future windows."""
 
     def __init__(self, contexts: np.ndarray, futures: np.ndarray):
+        if torch is None:
+            raise ImportError(
+                "ForecastWindowDataset requires the optional 'torch' extra. "
+                "Install ts-benchmark[torch] to use this helper."
+            )
         if contexts.shape[0] != futures.shape[0]:
             raise ValueError("contexts and futures must have the same first dimension.")
         self.contexts = torch.as_tensor(contexts, dtype=torch.float32)
@@ -55,5 +71,5 @@ class ForecastWindowDataset(Dataset):
     def __len__(self) -> int:
         return int(self.contexts.shape[0])
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[Any, Any]:
         return self.contexts[idx], self.futures[idx]

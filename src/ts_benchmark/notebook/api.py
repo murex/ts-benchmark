@@ -15,7 +15,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
+import tomllib
 from typing import Any, Iterable
 
 import numpy as np
@@ -74,6 +77,15 @@ _ARTIFACT_ALIASES = {
     "model_debug_artifacts": "model_debug",
 }
 
+_OFFICIAL_ADAPTER_EXTRA_BY_NAME = {
+    "pytorchts_timegrad": "timegrad",
+    "timegrad": "timegrad",
+    "gluonts_deepvar": "gluonts-mx",
+    "gluonts_gpvar": "gluonts-mx",
+    "gluonts_mx": "gluonts-mx",
+    "gluonts-mx": "gluonts-mx",
+}
+
 
 @dataclass(frozen=True)
 class NotebookModelSpec:
@@ -124,6 +136,22 @@ class BenchmarkDatasetView:
     info: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class NotebookAdapterEnv:
+    """Provisioned subprocess environment for an official adapter model."""
+
+    adapter_name: str
+    extra_name: str
+    venv_dir: Path
+    python_executable: Path
+    benchmark_install_target: str
+    adapter_install_target: str
+
+    @property
+    def execution(self) -> ModelExecutionConfig:
+        return ModelExecutionConfig(mode="subprocess", venv=str(self.venv_dir))
+
+
 def _coerce_execution_config(
     execution: ModelExecutionConfig | Mapping[str, Any] | None,
     *,
@@ -142,6 +170,106 @@ def _coerce_execution_config(
         pythonpath=[str(item) for item in list(block.get("pythonpath") or []) if str(item).strip()],
         env=StringMap({str(key): str(value) for key, value in dict(block.get("env") or {}).items()}),
     )
+
+
+def _normalize_official_adapter_extra(adapter_name: str) -> str:
+    normalized = str(adapter_name).strip().lower().replace(" ", "_")
+    extra = _OFFICIAL_ADAPTER_EXTRA_BY_NAME.get(normalized)
+    if extra is None:
+        supported = ", ".join(sorted(_OFFICIAL_ADAPTER_EXTRA_BY_NAME))
+        raise ValueError(
+            f"Unsupported official adapter '{adapter_name}'. Supported adapter names: {supported}."
+        )
+    return extra
+
+
+def _install_target_label(
+    *,
+    root: str | Path | None,
+    package_name: str,
+    extras: str | None = None,
+) -> str:
+    suffix = f"[{extras}]" if extras else ""
+    if root is None:
+        return f"{package_name}{suffix}"
+    return f"{Path(root).expanduser().resolve()}{suffix}"
+
+
+def _pip_install_command(
+    *,
+    python_executable: Path,
+    root: str | Path | None,
+    package_name: str,
+    extras: str | None = None,
+    editable: bool,
+) -> list[str]:
+    target = _install_target_label(root=root, package_name=package_name, extras=extras)
+    command = [str(python_executable), "-m", "pip", "install"]
+    if editable and root is not None:
+        command.extend(["-e", target])
+    else:
+        command.append(target)
+    return command
+
+
+def _optional_dependencies_from_pyproject(root: str | Path, extra_name: str) -> list[str]:
+    pyproject_path = Path(root).expanduser().resolve() / "pyproject.toml"
+    if not pyproject_path.exists():
+        return []
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    project = data.get("project") or {}
+    optional = project.get("optional-dependencies") or {}
+    values = optional.get(extra_name) or []
+    return [str(item) for item in values]
+
+
+def _project_dependencies_from_pyproject(root: str | Path) -> list[str]:
+    pyproject_path = Path(root).expanduser().resolve() / "pyproject.toml"
+    if not pyproject_path.exists():
+        return []
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    project = data.get("project") or {}
+    values = project.get("dependencies") or []
+    return [str(item) for item in values]
+
+
+def _worker_requirements_from_pyproject(root: str | Path) -> list[str]:
+    """Return the minimal benchmark requirements needed by the subprocess worker."""
+
+    requirements = _project_dependencies_from_pyproject(root)
+    return [
+        requirement
+        for requirement in requirements
+        if requirement.lower().startswith("jsonschema")
+    ]
+
+
+def _adapter_env_is_usable(venv_python: Path, adapter_name: str) -> bool:
+    """Return True when the provisioned adapter env can start the worker and adapter backend."""
+
+    normalized = str(adapter_name).strip().lower().replace(" ", "_")
+    adapter_probe = ""
+    if normalized in {"pytorchts_timegrad", "timegrad"}:
+        adapter_probe = (
+            "from ts_benchmark_official_adapters.timegrad "
+            "import _ensure_gluonts_distribution_output_compat\n"
+            "_ensure_gluonts_distribution_output_compat()\n"
+            "from pts.model.time_grad import TimeGradEstimator\n"
+        )
+    elif normalized in {"gluonts_deepvar", "gluonts_gpvar", "gluonts_mx", "gluonts-mx"}:
+        adapter_probe = "import gluonts\n"
+    probe = (
+        "import jsonschema\n"
+        "import ts_benchmark.model.wrappers.worker\n"
+        f"{adapter_probe}"
+    )
+    completed = subprocess.run(
+        [str(venv_python), "-c", probe],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
 
 
 def _normalize_notebook_dataset_spec(dataset: NotebookDatasetSpec | Mapping[str, Any]) -> NotebookDatasetSpec:
@@ -482,6 +610,198 @@ def entrypoint_model(
         execution=_coerce_execution_config(execution, default_mode="inprocess"),
         description=description,
         metadata=dict(metadata or {}),
+    )
+
+
+def provision_adapter_venv(
+    folder: str | Path,
+    adapter_name: str,
+    *,
+    benchmark_root: str | Path | None = None,
+    adapters_root: str | Path | None = None,
+    python: str | Path | None = None,
+    editable: bool = True,
+    upgrade_pip: bool = True,
+    reinstall: bool = False,
+    validate: bool = False,
+) -> NotebookAdapterEnv:
+    """Create a subprocess venv for an official adapter and install its dependencies.
+
+    This is intended for notebook users who want to keep heavyweight adapter
+    dependencies out of the main notebook environment. The returned object
+    exposes `execution`, which can be attached to a benchmark model config.
+    Existing environments are reused by default; pass ``reinstall=True`` to
+    refresh the environment in place. Pass ``validate=True`` to run an
+    import-based health check before reusing an existing environment.
+    """
+
+    extra_name = _normalize_official_adapter_extra(adapter_name)
+    venv_dir = Path(folder).expanduser().resolve()
+    creator_python = (
+        Path(python).expanduser().resolve()
+        if python is not None
+        else Path(sys.executable).resolve()
+    )
+    venv_python = venv_dir / "bin" / "python"
+    marker_path = venv_dir / ".ts_benchmark_adapter_env.json"
+    existed_before = venv_python.exists()
+    reusable = False
+    if existed_before and marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            reusable = (
+                str(marker.get("adapter_name") or "") == str(adapter_name)
+                and str(marker.get("extra_name") or "") == extra_name
+                and str(marker.get("creator_python") or "") == str(creator_python)
+            )
+        except Exception:
+            reusable = False
+
+    if reinstall and venv_dir.exists():
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        existed_before = False
+        reusable = False
+
+    if not reinstall and existed_before and not reusable and venv_dir.exists():
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        existed_before = False
+
+    if not venv_python.exists():
+        subprocess.run([str(creator_python), "-m", "venv", str(venv_dir)], check=True)
+    if not venv_python.exists():
+        raise FileNotFoundError(
+            f"Expected a Python executable at '{venv_python}' after creating the adapter venv."
+        )
+
+    if not reinstall and existed_before and reusable:
+        if not validate:
+            return NotebookAdapterEnv(
+                adapter_name=str(adapter_name),
+                extra_name=extra_name,
+                venv_dir=venv_dir,
+                python_executable=venv_python,
+                benchmark_install_target=_install_target_label(
+                    root=benchmark_root,
+                    package_name="ts-benchmark",
+                ),
+                adapter_install_target=_install_target_label(
+                    root=adapters_root,
+                    package_name="ts-benchmark-official-adapters",
+                    extras=extra_name,
+                ),
+            )
+        if _adapter_env_is_usable(venv_python, adapter_name):
+            return NotebookAdapterEnv(
+                adapter_name=str(adapter_name),
+                extra_name=extra_name,
+                venv_dir=venv_dir,
+                python_executable=venv_python,
+                benchmark_install_target=_install_target_label(
+                    root=benchmark_root,
+                    package_name="ts-benchmark",
+                ),
+                adapter_install_target=_install_target_label(
+                    root=adapters_root,
+                    package_name="ts-benchmark-official-adapters",
+                    extras=extra_name,
+                ),
+            )
+        shutil.rmtree(venv_dir, ignore_errors=True)
+        subprocess.run([str(creator_python), "-m", "venv", str(venv_dir)], check=True)
+        if not venv_python.exists():
+            raise FileNotFoundError(
+                f"Expected a Python executable at '{venv_python}' after recreating the adapter venv."
+            )
+
+    if upgrade_pip:
+        subprocess.run([str(venv_python), "-m", "pip", "install", "-U", "pip"], check=True)
+
+    subprocess.run(
+        [
+            str(venv_python),
+            "-m",
+            "pip",
+            "install",
+            *(
+                ["-e", str(Path(benchmark_root).expanduser().resolve())]
+                if benchmark_root is not None and editable
+                else [_install_target_label(root=benchmark_root, package_name="ts-benchmark")]
+            ),
+            "--no-deps",
+        ],
+        check=True,
+    )
+    if benchmark_root is not None and editable:
+        benchmark_requirements = _worker_requirements_from_pyproject(benchmark_root)
+        if benchmark_requirements:
+            subprocess.run(
+                [str(venv_python), "-m", "pip", "install", *benchmark_requirements],
+                check=True,
+            )
+    if adapters_root is not None and editable:
+        subprocess.run(
+            [
+                str(venv_python),
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                str(Path(adapters_root).expanduser().resolve()),
+                "--no-deps",
+            ],
+            check=True,
+        )
+        extra_requirements = _optional_dependencies_from_pyproject(adapters_root, extra_name)
+        base_requirements = [
+            requirement
+            for requirement in _project_dependencies_from_pyproject(adapters_root)
+            if not requirement.lower().startswith("ts-benchmark")
+        ]
+        combined_requirements = [*base_requirements, *extra_requirements]
+        if combined_requirements:
+            subprocess.run(
+                [str(venv_python), "-m", "pip", "install", *combined_requirements],
+                check=True,
+            )
+    else:
+        subprocess.run(
+            _pip_install_command(
+                python_executable=venv_python,
+                root=adapters_root,
+                package_name="ts-benchmark-official-adapters",
+                extras=extra_name,
+                editable=editable,
+            ),
+            check=True,
+        )
+
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    marker_path.write_text(
+        json.dumps(
+            {
+                "adapter_name": str(adapter_name),
+                "extra_name": extra_name,
+                "creator_python": str(creator_python),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return NotebookAdapterEnv(
+        adapter_name=str(adapter_name),
+        extra_name=extra_name,
+        venv_dir=venv_dir,
+        python_executable=venv_python,
+        benchmark_install_target=_install_target_label(
+            root=benchmark_root,
+            package_name="ts-benchmark",
+        ),
+        adapter_install_target=_install_target_label(
+            root=adapters_root,
+            package_name="ts-benchmark-official-adapters",
+            extras=extra_name,
+        ),
     )
 
 

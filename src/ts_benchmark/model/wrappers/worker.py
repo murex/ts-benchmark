@@ -14,6 +14,18 @@ import numpy as np
 if not hasattr(np, "bool"):
     np.bool = bool
 
+# NumPy 2 pickles may reference internal modules under ``numpy._core.*``.
+# Older NumPy 1.x runtimes still expose the same objects under ``numpy.core.*``.
+# Register aliases before unpickling cross-env payloads.
+if hasattr(np, "core"):
+    sys.modules.setdefault("numpy._core", np.core)
+    numeric = getattr(np.core, "numeric", None)
+    if numeric is not None:
+        sys.modules.setdefault("numpy._core.numeric", numeric)
+    multiarray = getattr(np.core, "multiarray", None)
+    if multiarray is not None:
+        sys.modules.setdefault("numpy._core.multiarray", multiarray)
+
 from ..definition import ModelReferenceConfig
 from ..resolution import instantiate_model_target
 from .duck_typed import coerce_model_target

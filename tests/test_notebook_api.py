@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import textwrap
 
 import numpy as np
@@ -11,7 +12,14 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ts_benchmark.notebook import csv_dataset, dataset_frame, entrypoint_model, load_run, run_benchmark
+from ts_benchmark.notebook import (
+    csv_dataset,
+    dataset_frame,
+    entrypoint_model,
+    load_run,
+    provision_adapter_venv,
+    run_benchmark,
+)
 from ts_benchmark.ui.services.runs import benchmark_results_dir_for_path, materialize_benchmark_results
 
 
@@ -225,6 +233,182 @@ def test_dataset_frame_accepts_tabular_notebook_dataset_spec(tmp_path: Path) -> 
     assert view.info["source"] == "csv"
     assert view.info["n_assets"] == 2
     assert view.info["provider"]["config"]["date_column"] == "date"
+
+
+def test_provision_adapter_venv_returns_subprocess_execution_config(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    benchmark_root = tmp_path / "ts-benchmark"
+    adapters_root = tmp_path / "official_adapters"
+    benchmark_root.mkdir()
+    adapters_root.mkdir()
+    (adapters_root / "pyproject.toml").write_text(
+        textwrap.dedent(
+            """
+            [project]
+            name = "ts-benchmark-official-adapters"
+            version = "0.1.0"
+            dependencies = [
+              "numpy>=1.24",
+              "ts-benchmark>=0.4.0",
+            ]
+
+            [project.optional-dependencies]
+            timegrad = [
+              "gluonts>=0.14",
+              "pytorchts>=0.6,<0.7",
+              "lightning>=2,<3",
+              "diffusers>=0.24",
+            ]
+            """
+        ),
+        encoding="utf-8",
+    )
+    venv_dir = tmp_path / "venvs" / "timegrad"
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], check: bool = True):
+        commands.append(list(cmd))
+        if "-m" in cmd and "venv" in cmd:
+            python_exe = venv_dir / "bin" / "python"
+            python_exe.parent.mkdir(parents=True, exist_ok=True)
+            python_exe.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("ts_benchmark.notebook.api.subprocess.run", fake_run)
+
+    env = provision_adapter_venv(
+        venv_dir,
+        "pytorchts_timegrad",
+        benchmark_root=benchmark_root,
+        adapters_root=adapters_root,
+        python=sys.executable,
+    )
+
+    assert env.adapter_name == "pytorchts_timegrad"
+    assert env.extra_name == "timegrad"
+    assert env.venv_dir == venv_dir.resolve()
+    assert env.execution.mode == "subprocess"
+    assert env.execution.venv == str(venv_dir.resolve())
+    assert commands[0] == [str(Path(sys.executable).resolve()), "-m", "venv", str(venv_dir.resolve())]
+    assert commands[1] == [str(venv_dir.resolve() / "bin" / "python"), "-m", "pip", "install", "-U", "pip"]
+    assert commands[2] == [
+        str(venv_dir.resolve() / "bin" / "python"),
+        "-m",
+        "pip",
+        "install",
+        "-e",
+        str(benchmark_root.resolve()),
+        "--no-deps",
+    ]
+    assert commands[3] == [
+        str(venv_dir.resolve() / "bin" / "python"),
+        "-m",
+        "pip",
+        "install",
+        "-e",
+        str(adapters_root.resolve()),
+        "--no-deps",
+    ]
+    assert commands[4] == [
+        str(venv_dir.resolve() / "bin" / "python"),
+        "-m",
+        "pip",
+        "install",
+        "numpy>=1.24",
+        "gluonts>=0.14",
+        "pytorchts>=0.6,<0.7",
+        "lightning>=2,<3",
+        "diffusers>=0.24",
+    ]
+
+
+def test_provision_adapter_venv_reuses_existing_environment_without_reinstall(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    venv_dir = tmp_path / "venvs" / "timegrad"
+    python_exe = venv_dir / "bin" / "python"
+    python_exe.parent.mkdir(parents=True, exist_ok=True)
+    python_exe.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+    (venv_dir / ".ts_benchmark_adapter_env.json").write_text(
+        json.dumps(
+            {
+                "adapter_name": "pytorchts_timegrad",
+                "extra_name": "timegrad",
+                "creator_python": str(Path(sys.executable).resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called when reusing an existing adapter venv")
+
+    monkeypatch.setattr("ts_benchmark.notebook.api.subprocess.run", fail_run)
+
+    def fail_validate(*args, **kwargs):
+        raise AssertionError("validation should not run unless validate=True")
+
+    monkeypatch.setattr("ts_benchmark.notebook.api._adapter_env_is_usable", fail_validate)
+
+    env = provision_adapter_venv(
+        venv_dir,
+        "pytorchts_timegrad",
+        benchmark_root=tmp_path / "ts-benchmark",
+        adapters_root=tmp_path / "official_adapters",
+    )
+
+    assert env.adapter_name == "pytorchts_timegrad"
+    assert env.extra_name == "timegrad"
+    assert env.venv_dir == venv_dir.resolve()
+    assert env.python_executable == python_exe.resolve()
+    assert env.execution.mode == "subprocess"
+    assert env.execution.venv == str(venv_dir.resolve())
+
+
+def test_provision_adapter_venv_can_explicitly_validate_existing_environment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    venv_dir = tmp_path / "venvs" / "timegrad"
+    python_exe = venv_dir / "bin" / "python"
+    python_exe.parent.mkdir(parents=True, exist_ok=True)
+    python_exe.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+    (venv_dir / ".ts_benchmark_adapter_env.json").write_text(
+        json.dumps(
+            {
+                "adapter_name": "pytorchts_timegrad",
+                "extra_name": "timegrad",
+                "creator_python": str(Path(sys.executable).resolve()),
+            }
+        ),
+        encoding="utf-8",
+    )
+    validated = {"called": False}
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called when validation succeeds")
+
+    def validate_env(_python, _adapter):
+        validated["called"] = True
+        return True
+
+    monkeypatch.setattr("ts_benchmark.notebook.api.subprocess.run", fail_run)
+    monkeypatch.setattr("ts_benchmark.notebook.api._adapter_env_is_usable", validate_env)
+
+    env = provision_adapter_venv(
+        venv_dir,
+        "pytorchts_timegrad",
+        benchmark_root=tmp_path / "ts-benchmark",
+        adapters_root=tmp_path / "official_adapters",
+        validate=True,
+    )
+
+    assert validated["called"] is True
+    assert env.adapter_name == "pytorchts_timegrad"
+    assert env.extra_name == "timegrad"
 
 
 def test_notebook_load_run_rehydrates_views(tmp_path: Path) -> None:

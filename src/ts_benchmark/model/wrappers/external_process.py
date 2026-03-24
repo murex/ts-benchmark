@@ -132,6 +132,9 @@ class ExternalProcessScenarioModel(ScenarioModel):
             pythonpath.append(existing)
         if pythonpath:
             env["PYTHONPATH"] = os.pathsep.join(pythonpath)
+        backend = str(env.get("MPLBACKEND") or "").strip()
+        if backend.startswith("module://matplotlib_inline"):
+            env["MPLBACKEND"] = "Agg"
         venv_root = self._venv_root()
         if venv_root is not None:
             env.setdefault("VIRTUAL_ENV", str(venv_root))
@@ -299,7 +302,10 @@ class ExternalProcessScenarioModel(ScenarioModel):
                         process.kill()
             finally:
                 if process.stdin is not None:
-                    process.stdin.close()
+                    try:
+                        process.stdin.close()
+                    except BrokenPipeError:
+                        pass
                 if process.stdout is not None:
                     process.stdout.close()
         self._process = None
