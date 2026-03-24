@@ -405,7 +405,7 @@
     "device": "cuda:0",
     "scheduler": "sequential",
     "output": {
-      "output_dir": "/tmp/tsb_smoke_with_scenarios",
+      "output_dir": null,
       "keep_scenarios": true,
       "save_scenarios": true,
       "save_model_info": true,
@@ -429,7 +429,7 @@
     "requested_at": "2026-03-24T12:17:01.502086+00:00",
     "started_at": "2026-03-24T12:17:01.502086+00:00",
     "finished_at": "2026-03-24T12:17:12.282318+00:00",
-    "resolved_output_dir": "/tmp/tsb_smoke_with_scenarios",
+    "resolved_output_dir": null,
     "resolved_execution": {
       "scheduler": "sequential",
       "execution_mode": "sequential",

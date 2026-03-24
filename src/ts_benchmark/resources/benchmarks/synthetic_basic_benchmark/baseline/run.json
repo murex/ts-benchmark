@@ -29,7 +29,7 @@
   "requested_at": "2026-03-24T11:12:25.535133+00:00",
   "started_at": "2026-03-24T11:12:25.535133+00:00",
   "finished_at": "2026-03-24T11:12:41.210975+00:00",
-  "resolved_output_dir": "/home/samer/.local/share/ts-benchmark/runs/synthetic_basic_benchmark",
+  "resolved_output_dir": null,
   "resolved_execution": {
     "scheduler": "auto",
     "execution_mode": "model_parallel",
