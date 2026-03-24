@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ts-benchmark-official-adapters"
+version = "0.1.0"
+description = "Official multivariate model adapters for ts-benchmark"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "ts-benchmark>=0.4.0",
+]
+
+[project.optional-dependencies]
+gluonts-mx = [
+  "pandas>=2.0",
+  "gluonts>=0.14",
+  "mxnet<2",
+]
+timegrad = [
+  "pandas>=2.0",
+  "gluonts>=0.14",
+  "pytorchts>=0.6,<0.7",
+  "diffusers>=0.24",
+]
+all = [
+  "pandas>=2.0",
+  "gluonts>=0.14",
+  "mxnet<2",
+  "pytorchts>=0.6,<0.7",
+  "diffusers>=0.24",
+]
+
+[project.entry-points."ts_benchmark.models"]
+gluonts_deepvar = "ts_benchmark_official_adapters.plugin:build_gluonts_deepvar"
+gluonts_gpvar = "ts_benchmark_official_adapters.plugin:build_gluonts_gpvar"
+pytorchts_timegrad = "ts_benchmark_official_adapters.plugin:build_pytorchts_timegrad"
+
+[project.entry-points."ts_benchmark.model_manifests"]
+gluonts_deepvar = "ts_benchmark_official_adapters.plugin:get_gluonts_deepvar_manifest"
+gluonts_gpvar = "ts_benchmark_official_adapters.plugin:get_gluonts_gpvar_manifest"
+pytorchts_timegrad = "ts_benchmark_official_adapters.plugin:get_pytorchts_timegrad_manifest"
+
+[tool.setuptools.packages.find]
+where = ["src"]

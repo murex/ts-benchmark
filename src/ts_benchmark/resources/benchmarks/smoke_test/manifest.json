@@ -1,0 +1,6 @@
+{
+  "benchmark_id": "smoke_test",
+  "display_name": "smoke_test",
+  "description": "Quick synthetic smoke benchmark for six series on the basic synthetic dataset, with built-in baselines and the official TimeGrad adapter.",
+  "has_baseline": false
+}

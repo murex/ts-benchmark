@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ts-benchmark"
+version = "0.4.0"
+description = "Config-driven benchmarking framework for generative models on time-series return scenarios"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "scipy>=1.10",
+  "torch>=2.1",
+  "jsonschema>=4.18",
+]
+
+[project.scripts]
+ts-benchmark = "ts_benchmark.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"ts_benchmark.schemas" = ["*.json"]
+"ts_benchmark.resources" = [
+  "benchmarks/*/benchmark.json",
+  "benchmarks/*/manifest.json",
+  "benchmarks/*/baseline/*.json",
+  "benchmarks/*/baseline/*.csv",
+  "benchmarks/*/baseline/diagnostics/*.csv",
+  "sample_data/*.csv",
+]
+
+[project.optional-dependencies]
+ui = [
+  "streamlit>=1.31",
+]
+tracking = [
+  "mlflow>=2.12",
+]
+notebook = [
+  "ipython>=8.0",
+  "matplotlib>=3.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+  ".*",
+  "__pycache__",
+  "build",
+  "dist",
+]

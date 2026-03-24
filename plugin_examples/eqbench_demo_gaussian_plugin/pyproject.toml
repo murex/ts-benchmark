@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eqbench-demo-gaussian-plugin"
+version = "0.1.0"
+description = "Example external model plugin for ts-benchmark"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "ts-benchmark>=0.4.0"]
+
+[project.entry-points."ts_benchmark.models"]
+demo_gaussian_plugin = "eqbench_demo_gaussian_plugin.plugin:build_model"
+
+[project.entry-points."ts_benchmark.model_manifests"]
+demo_gaussian_plugin = "eqbench_demo_gaussian_plugin.plugin:get_plugin_manifest"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,1 @@
+"""Example external benchmark plugin."""

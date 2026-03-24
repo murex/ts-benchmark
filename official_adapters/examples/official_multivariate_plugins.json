@@ -1,0 +1,122 @@
+{
+  "version": "1.0",
+  "benchmark": {
+    "name": "official_multivariate_plugins",
+    "description": "Example config using the in-repo official adapter subproject.",
+    "dataset": {
+      "name": "regime_switching_sv_demo",
+      "provider": {
+        "kind": "synthetic",
+        "config": {
+          "generator": "regime_switching_factor_sv",
+          "params": {
+            "n_assets": 4,
+            "seed": 11
+          }
+        }
+      },
+      "schema": {
+        "layout": "tensor",
+        "frequency": "B"
+      },
+      "semantics": {},
+      "metadata": {}
+    },
+    "protocol": {
+      "train_size": 160,
+      "test_size": 40,
+      "context_length": 30,
+      "horizon": 10,
+      "eval_stride": 10,
+      "train_stride": 1,
+      "n_model_scenarios": 8,
+      "n_reference_scenarios": 16
+    },
+    "metrics": [
+      {
+        "name": "energy_score"
+      },
+      {
+        "name": "crps"
+      },
+      {
+        "name": "cross_correlation_error"
+      }
+    ],
+    "models": [
+      {
+        "name": "deepvar_external",
+        "reference": {
+          "kind": "plugin",
+          "value": "gluonts_deepvar"
+        },
+        "execution": {
+          "mode": "subprocess",
+          "venv": "eqbench-mxnet"
+        },
+        "params": {
+          "epochs": 1,
+          "batch_size": 8,
+          "num_batches_per_epoch": 10
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      },
+      {
+        "name": "gpvar_external",
+        "reference": {
+          "kind": "plugin",
+          "value": "gluonts_gpvar"
+        },
+        "execution": {
+          "mode": "subprocess",
+          "venv": "eqbench-mxnet"
+        },
+        "params": {
+          "epochs": 1,
+          "batch_size": 8,
+          "num_batches_per_epoch": 10
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      },
+      {
+        "name": "timegrad_external",
+        "reference": {
+          "kind": "plugin",
+          "value": "pytorchts_timegrad"
+        },
+        "params": {
+          "hidden_size": 16,
+          "num_layers": 1,
+          "num_inference_steps": 8,
+          "trainer_kwargs": {
+            "max_epochs": 1
+          }
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      }
+    ]
+  },
+  "run": {
+    "seed": 21,
+    "execution": {
+      "device": null,
+      "scheduler": "auto"
+    },
+    "output": {
+      "keep_scenarios": true,
+      "output_dir": null,
+      "save_scenarios": false,
+      "save_model_info": true,
+      "save_summary": true
+    }
+  }
+}

@@ -1,0 +1,15 @@
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+build/
+dist/
+*.egg-info/
+
+.coverage
+.coverage.*
+htmlcov/
+
+.streamlit_runtime/
+
+.DS_Store

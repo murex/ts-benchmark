@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+import textwrap
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from ts_benchmark.notebook import csv_dataset, dataset_frame, entrypoint_model, load_run, run_benchmark
+from ts_benchmark.ui.services.runs import benchmark_results_dir_for_path, materialize_benchmark_results
+
+
+def _notebook_smoke_config(*, output_dir: Path) -> dict[str, object]:
+    return {
+        "version": "1.0",
+        "benchmark": {
+            "name": "notebook_smoke",
+            "dataset": {
+                "provider": {
+                    "kind": "synthetic",
+                    "config": {
+                        "generator": "regime_switching_factor_sv",
+                        "params": {"n_assets": 2, "seed": 19},
+                    },
+                },
+                "schema": {"layout": "tensor", "frequency": "B"},
+                "semantics": {},
+                "metadata": {},
+            },
+            "protocol": {
+                "train_size": 80,
+                "test_size": 20,
+                "context_length": 8,
+                "horizon": 3,
+                "eval_stride": 5,
+                "train_stride": 1,
+                "n_model_scenarios": 8,
+                "n_reference_scenarios": 12,
+            },
+            "metrics": [{"name": "crps"}],
+            "models": [
+                {
+                    "name": "debug_model",
+                    "reference": {
+                        "kind": "entrypoint",
+                        "value": "ts_benchmark.model.builtins.debug_smoke_model:DebugSmokeModel",
+                    },
+                    "params": {"scale": 1.0},
+                    "pipeline": {"name": "raw", "steps": []},
+                }
+            ],
+        },
+        "run": {
+            "seed": 19,
+            "execution": {"device": "cpu", "scheduler": "auto"},
+            "output": {
+                "keep_scenarios": False,
+                "output_dir": str(output_dir),
+                "save_scenarios": False,
+                "save_model_info": False,
+                "save_summary": False,
+            },
+        },
+        "diagnostics": {
+            "save_model_debug_artifacts": False,
+            "save_distribution_summary": False,
+            "save_per_window_metrics": False,
+            "functional_smoke": {
+                "enabled": False,
+            },
+        },
+    }
+
+
+def _write_external_entrypoint_model(path: Path) -> None:
+    path.write_text(
+        textwrap.dedent(
+            """
+            from __future__ import annotations
+
+            from dataclasses import dataclass
+            from types import SimpleNamespace
+
+            import numpy as np
+
+
+            @dataclass
+            class TinyGenerator:
+                target_dim: int
+                shift: float = 0.0
+
+                def capabilities(self):
+                    return SimpleNamespace(
+                        supported_modes={"forecast"},
+                        supports_multivariate_targets=True,
+                        supports_known_covariates=False,
+                        supports_observed_covariates=False,
+                        supports_static_covariates=False,
+                        supports_constraints=False,
+                    )
+
+                def sample(self, request):
+                    values = np.asarray(request.batch.values, dtype=float)
+                    horizon = int(request.task.horizon or 1)
+                    num_samples = int(request.num_samples)
+                    last = values[:, -1:, :] + self.shift
+                    tiled = np.repeat(last, horizon, axis=1)
+                    samples = np.repeat(tiled[:, None, :, :], num_samples, axis=1)
+                    return SimpleNamespace(
+                        samples=samples,
+                        diagnostics={"source": "temp_external_entrypoint"},
+                    )
+
+
+            @dataclass
+            class TinyTrainer:
+                shift: float = 0.0
+
+                def fit(self, train, *, schema, task, valid=None, runtime=None):
+                    return TinyGenerator(target_dim=int(schema.target_dim), shift=float(self.shift)), SimpleNamespace(
+                        train_metrics={"fit_called": 1.0, "shift": float(self.shift)}
+                    )
+
+
+            def build_estimator(**params):
+                return TinyTrainer(**params)
+            """
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_returns_csv(path: Path, *, n_rows: int = 100) -> pd.DataFrame:
+    dates = pd.date_range("2022-01-03", periods=n_rows, freq="B")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "asset_a": np.linspace(-0.02, 0.03, n_rows),
+            "asset_b": np.linspace(0.01, -0.015, n_rows),
+        }
+    )
+    frame.to_csv(path, index=False)
+    return frame
+
+
+def test_notebook_run_overrides_requested_artifacts(tmp_path: Path) -> None:
+    output_dir = tmp_path / "notebook_run"
+    run = run_benchmark(
+        _notebook_smoke_config(output_dir=output_dir),
+        include=["scenarios", "diagnostics"],
+    )
+
+    metrics = run.metrics()
+    overview = run.model_overview()
+    scenarios = run.scenarios("debug_model")
+    dist = run.distribution_summary()
+    per_window = run.per_window_metrics(model_name="debug_model")
+    smoke_summary = run.functional_smoke_summary(model_name="debug_model")
+    smoke_checks = run.functional_smoke_checks(model_name="debug_model")
+    debug_artifacts = run.model_debug_artifacts("debug_model")
+
+    assert not metrics.empty
+    assert "crps" in metrics.columns
+    assert not overview.empty
+    assert scenarios.shape[0] > 0
+    assert not dist.empty
+    assert not per_window.empty
+    assert not smoke_summary.empty
+    assert not smoke_checks.empty
+    assert debug_artifacts["wrapped_debug_artifacts"]["fit_log"]
+
+    assert run.output_dir == output_dir.resolve()
+    assert (output_dir / "scenarios.npz").exists()
+    assert (output_dir / "model_results.json").exists()
+    assert (output_dir / "summary.json").exists()
+    diagnostics_dir = output_dir / "diagnostics"
+    assert (diagnostics_dir / "distribution_summary.csv").exists()
+    assert (diagnostics_dir / "distribution_summary_by_asset.csv").exists()
+    assert (diagnostics_dir / "per_window_metrics.csv").exists()
+    assert (diagnostics_dir / "functional_smoke_summary.csv").exists()
+    assert (diagnostics_dir / "functional_smoke_checks.csv").exists()
+    assert (diagnostics_dir / "model_debug_artifacts" / "debug_model.json").exists()
+
+
+def test_dataset_frame_exposes_synthetic_generator_metadata(tmp_path: Path) -> None:
+    output_dir = tmp_path / "dataset_frame_run"
+    config = _notebook_smoke_config(output_dir=output_dir)
+
+    view = dataset_frame(config)
+
+    assert list(view.frame.columns) == ["Asset_01", "Asset_02"]
+    assert view.frame.shape[0] == 100
+    assert view.info["source"] == "synthetic"
+    assert view.info["synthetic"]["generator"] == "regime_switching_factor_sv"
+    assert view.info["synthetic"]["params"]["n_assets"] == 2
+    assert view.info["synthetic"]["n_points_to_generate"] == 100
+
+
+def test_dataset_frame_accepts_tabular_notebook_dataset_spec(tmp_path: Path) -> None:
+    csv_path = tmp_path / "returns.csv"
+    source = _write_returns_csv(csv_path)
+    spec = csv_dataset(
+        csv_path,
+        name="local_returns",
+        time_column="date",
+        target_columns=["asset_a", "asset_b"],
+        frequency="B",
+        semantics={"target_kind": "returns", "return_kind": "simple"},
+    )
+
+    view = dataset_frame(spec)
+
+    assert list(view.frame.columns) == ["__timestamp__", "asset_a", "asset_b"]
+    assert view.frame.shape == (100, 3)
+    pd.testing.assert_series_equal(
+        view.frame["asset_a"].reset_index(drop=True),
+        source["asset_a"],
+        check_names=False,
+    )
+    assert view.info["source"] == "csv"
+    assert view.info["n_assets"] == 2
+    assert view.info["provider"]["config"]["date_column"] == "date"
+
+
+def test_notebook_load_run_rehydrates_views(tmp_path: Path) -> None:
+    output_dir = tmp_path / "saved_notebook_run"
+    live = run_benchmark(
+        _notebook_smoke_config(output_dir=output_dir),
+        include=["scenarios", "diagnostics"],
+    )
+    loaded = load_run(output_dir)
+
+    pd.testing.assert_frame_equal(live.metrics(), loaded.metrics())
+    pd.testing.assert_frame_equal(
+        live.per_window_metrics(model_name="debug_model"),
+        loaded.per_window_metrics(model_name="debug_model"),
+    )
+
+    band = loaded.scenario_band("debug_model", evaluation_window=0, asset=0)
+    report = loaded.debug_report("debug_model")
+    compare = loaded.compare_metrics(live)
+    dataset_view = loaded.dataset_frame()
+
+    assert list(band.columns) == ["realized", "p05", "median", "p95"]
+    assert dataset_view.frame.shape == (100, 2)
+    assert dataset_view.info["synthetic"]["n_points_to_generate"] == 100
+    assert "Benchmark" in report
+    assert "Model Hyperparameters" in report
+    assert "Generated Scenarios" in report
+    assert "Model Logs" in report
+    assert "crps_current" in compare.columns
+    assert "crps_compare" in compare.columns
+
+
+def test_notebook_run_can_inject_entrypoint_model_without_mutating_source_config(tmp_path: Path) -> None:
+    output_dir = tmp_path / "notebook_injected_model_run"
+    external_model_path = tmp_path / "tiny_external_model.py"
+    _write_external_entrypoint_model(external_model_path)
+
+    config = _notebook_smoke_config(output_dir=output_dir)
+    config["run"]["execution"]["model_execution"] = {"mode": "subprocess", "python": sys.executable}
+    config["benchmark"]["models"][0]["execution"] = {"mode": "inprocess"}
+    original_models = list(config["benchmark"]["models"])
+
+    run = run_benchmark(
+        config,
+        with_model=entrypoint_model(
+            "notebook_external",
+            f"{external_model_path}:build_estimator",
+            shift=0.25,
+        ),
+    )
+
+    assert len(config["benchmark"]["models"]) == len(original_models)
+    assert [item["name"] for item in config["benchmark"]["models"]] == [item["name"] for item in original_models]
+
+    effective_models = run.config()["benchmark"]["models"]
+    assert [item["name"] for item in effective_models] == ["debug_model", "notebook_external"]
+    injected = next(item for item in effective_models if item["name"] == "notebook_external")
+    assert injected["reference"]["kind"] == "entrypoint"
+    assert injected["reference"]["value"] == f"{external_model_path}:build_estimator"
+    assert injected["params"]["shift"] == 0.25
+    assert injected["execution"]["mode"] == "inprocess"
+
+    metrics = run.metrics()
+    assert "notebook_external" in metrics.index
+
+    model_result = run.model_result("notebook_external")
+    assert model_result["params"]["shift"] == 0.25
+    assert model_result["execution"]["requested"]["mode"] == "inprocess"
+    assert model_result["fitted_model_info"]["adapter"] == "duck_typed_estimator"
+
+
+def test_notebook_injected_model_always_runs_while_official_results_are_reused(tmp_path: Path) -> None:
+    benchmark_path = tmp_path / "benchmarks" / "notebook_smoke.json"
+    benchmark_path.parent.mkdir(parents=True, exist_ok=True)
+    previous_output_dir = tmp_path / "outputs" / "official_previous_run"
+    external_model_path = tmp_path / "tiny_external_model.py"
+    _write_external_entrypoint_model(external_model_path)
+
+    benchmark_config = _notebook_smoke_config(output_dir=previous_output_dir)
+    benchmark_path.write_text(json.dumps(benchmark_config, indent=2), encoding="utf-8")
+
+    baseline = run_benchmark(benchmark_path)
+    assert baseline.model_names() == ["debug_model"]
+    official_results_dir = materialize_benchmark_results(
+        benchmark_path=benchmark_path,
+        benchmark_config=baseline.config(),
+        source_run_dir=baseline.output_dir,
+        previous_results_dir=None,
+    )
+    assert official_results_dir == benchmark_results_dir_for_path(benchmark_path)
+
+    notebook_output_dir = tmp_path / "outputs" / "notebook_merged_run"
+    first = run_benchmark(
+        benchmark_path,
+        output_dir=notebook_output_dir,
+        with_model=entrypoint_model(
+            "notebook_external",
+            f"{external_model_path}:build_estimator",
+            shift=0.25,
+        ),
+    )
+    second = run_benchmark(
+        benchmark_path,
+        output_dir=notebook_output_dir,
+        with_model=entrypoint_model(
+            "notebook_external",
+            f"{external_model_path}:build_estimator",
+            shift=0.75,
+        ),
+    )
+
+    assert sorted(first.model_names()) == ["debug_model", "notebook_external"]
+    assert sorted(second.model_names()) == ["debug_model", "notebook_external"]
+    assert "notebook_external" not in load_run(official_results_dir).model_names()
+    assert first.model_result("notebook_external")["fitted_model_info"]["fit_report"]["train_metrics"]["shift"] == 0.25
+    assert second.model_result("notebook_external")["fitted_model_info"]["fit_report"]["train_metrics"]["shift"] == 0.75
+    assert second.output_dir == notebook_output_dir.resolve()
+
+
+def test_run_benchmark_can_override_dataset_with_notebook_dataset_spec(tmp_path: Path) -> None:
+    output_dir = tmp_path / "notebook_tabular_run"
+    csv_path = tmp_path / "returns.csv"
+    _write_returns_csv(csv_path)
+    spec = csv_dataset(
+        csv_path,
+        name="local_returns",
+        time_column="date",
+        target_columns=["asset_a", "asset_b"],
+        frequency="B",
+        semantics={"target_kind": "returns", "return_kind": "simple"},
+    )
+
+    run = run_benchmark(
+        _notebook_smoke_config(output_dir=output_dir),
+        with_dataset=spec,
+    )
+
+    assert run.config()["benchmark"]["dataset"]["provider"]["kind"] == "csv"
+    assert run.config()["benchmark"]["dataset"]["provider"]["config"]["path"] == str(csv_path)
+    assert run.summary()["dataset"]["resolved_source"] == "csv"
+    assert run.model_names() == ["debug_model"]
+    dataset_view = run.dataset_frame()
+    assert dataset_view.info["source"] == "csv"
+    assert dataset_view.frame.shape == (100, 2)

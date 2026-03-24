@@ -1,0 +1,142 @@
+{
+  "version": "1.0",
+  "benchmark": {
+    "name": "synthetic basic benchmark",
+    "description": "Baseline synthetic benchmark for six series on the default stochastic-volatility regime-switching dataset.",
+    "dataset": {
+      "name": "synthetic_default_6_series",
+      "description": "Default six-series synthetic daily return panel with stochastic volatility, leverage effects, heavy tails, and regime switching.",
+      "provider": {
+        "kind": "synthetic",
+        "config": {
+          "generator": "regime_switching_factor_sv",
+          "params": {
+            "n_assets": 6,
+            "seed": 21
+          }
+        }
+      },
+      "schema": {
+        "layout": "tensor",
+        "frequency": "B"
+      },
+      "semantics": {
+        "target_kind": "returns"
+      },
+      "metadata": {
+        "n_assets": 6,
+        "profile": "default"
+      }
+    },
+    "protocol": {
+      "train_size": 240,
+      "test_size": 60,
+      "context_length": 20,
+      "horizon": 5,
+      "eval_stride": 10,
+      "train_stride": 1,
+      "n_model_scenarios": 32,
+      "n_reference_scenarios": 64
+    },
+    "metrics": [
+      {"name": "crps"},
+      {"name": "energy_score"},
+      {"name": "predictive_mean_mse"},
+      {"name": "coverage_90_error"},
+      {"name": "mean_error"},
+      {"name": "volatility_error"},
+      {"name": "skew_error"},
+      {"name": "excess_kurtosis_error"},
+      {"name": "cross_correlation_error"},
+      {"name": "autocorrelation_error"},
+      {"name": "squared_autocorrelation_error"},
+      {"name": "var_95_error"},
+      {"name": "es_95_error"},
+      {"name": "max_drawdown_error"},
+      {"name": "mmd_rbf"}
+    ],
+    "models": [
+      {
+        "name": "historical_bootstrap",
+        "description": "Historical bootstrap baseline.",
+        "reference": {
+          "kind": "builtin",
+          "value": "historical_bootstrap"
+        },
+        "params": {
+          "block_size": 5
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      },
+      {
+        "name": "historical_sv_bootstrap",
+        "description": "Historical stochastic-volatility bootstrap baseline.",
+        "reference": {
+          "kind": "builtin",
+          "value": "stochastic_volatility_bootstrap"
+        },
+        "params": {
+          "ewma_lambda": 0.97,
+          "block_size": 5,
+          "vol_of_vol": 0.1,
+          "long_run_blend": 0.02
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      },
+      {
+        "name": "pytorchts_timegrad",
+        "description": "Official TimeGrad plugin model.",
+        "reference": {
+          "kind": "plugin",
+          "value": "pytorchts_timegrad"
+        },
+        "params": {
+          "hidden_size": 16,
+          "num_layers": 1,
+          "dropout_rate": 0.1,
+          "num_inference_steps": 8,
+          "trainer_kwargs": {
+            "max_epochs": 1
+          }
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      }
+    ]
+  },
+  "run": {
+    "seed": 21,
+    "execution": {
+      "scheduler": "auto",
+      "device": null,
+      "model_execution": {
+        "mode": "inprocess"
+      }
+    },
+    "tracking": {
+      "mlflow": {}
+    },
+    "output": {
+      "keep_scenarios": false,
+      "save_scenarios": false,
+      "save_model_info": true,
+      "save_summary": true
+    }
+  },
+  "diagnostics": {
+    "save_model_debug_artifacts": true,
+    "save_distribution_summary": true,
+    "save_per_window_metrics": true,
+    "functional_smoke": {
+      "enabled": true
+    }
+  }
+}
