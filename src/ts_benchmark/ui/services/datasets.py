@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,33 @@ from ts_benchmark.serialization import to_jsonable
 from .. import BENCHMARK_CATALOG_DIR, CONFIG_DIR, DATASET_CATALOG_DIR, UPLOAD_DIR
 
 SUPPORTED_DATASET_SOURCES = ("synthetic", "csv", "parquet")
+_EXTRA_DATASET_DIRS_ENV = "TS_BENCHMARK_UI_EXTRA_DATASET_DIRS"
+
+
+def _extra_dataset_paths() -> list[Path]:
+    raw = str(os.getenv(_EXTRA_DATASET_DIRS_ENV) or "").strip()
+    if not raw:
+        return []
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for part in raw.split(os.pathsep):
+        value = str(part).strip()
+        if not value:
+            continue
+        path = Path(value).expanduser().resolve()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _dataset_paths_from_root(root: Path) -> dict[str, Path]:
+    if root.is_file():
+        if root.suffix.lower() != ".json":
+            return {}
+        return {root.stem: root.resolve()}
+    return {path.stem: path.resolve() for path in sorted(root.glob("*.json"))}
 
 
 def default_dataset_dict() -> dict[str, Any]:
@@ -196,16 +224,25 @@ def inspect_tabular_source(
 
 
 def saved_dataset_paths(dataset_dir: Path = DATASET_CATALOG_DIR) -> dict[str, Path]:
-    return {path.stem: path for path in sorted(dataset_dir.glob("*.json"))}
+    paths = {path.stem: path for path in sorted(dataset_dir.glob("*.json"))}
+    if dataset_dir == DATASET_CATALOG_DIR:
+        for root in _extra_dataset_paths():
+            for key, path in _dataset_paths_from_root(root).items():
+                paths.setdefault(key, path)
+    return paths
 
 
 def _resolve_saved_dataset_path(name: str, dataset_dir: Path = DATASET_CATALOG_DIR) -> Path | None:
     target = str(name).strip()
     if not target:
         return None
-    slug_match = dataset_dir / f"{_slugify_name(target)}.json"
+    slug = _slugify_name(target)
+    slug_match = dataset_dir / f"{slug}.json"
     if slug_match.exists():
         return slug_match
+    path_match = saved_dataset_paths(dataset_dir).get(slug)
+    if path_match is not None:
+        return path_match
     for path in saved_dataset_paths(dataset_dir).values():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -264,7 +301,9 @@ def find_benchmark_configs_using_dataset(
 
     usages: list[Path] = []
     if config_dir == CONFIG_DIR:
-        benchmark_paths = list(shipped_benchmark_paths().values()) + list(sorted(benchmark_dir.glob("*.json")))
+        from .configs import saved_benchmark_paths
+
+        benchmark_paths = list(saved_benchmark_paths().values()) + list(sorted(benchmark_dir.glob("*.json")))
     else:
         benchmark_paths = list(sorted(config_dir.glob("*.json")))
     for path in benchmark_paths:

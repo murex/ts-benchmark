@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from ts_benchmark.ui import SRC_ROOT
 from ts_benchmark.ui.pages import results as results_page
-from ts_benchmark.ui.services import configs, runs
+from ts_benchmark.ui.services import configs, datasets, runs
 from ts_benchmark.ui.services.configs import current_config_summary
 
 
@@ -321,6 +321,105 @@ def test_saved_benchmark_results_metadata(tmp_path: Path) -> None:
     assert rows[0]["results_updated_at"] is not None
     assert rows[0]["results_summary"] == {"models": ["hist_a", "hist_b"]}
     assert metadata["latest_results"]["summary"] == {"models": ["hist_a", "hist_b"]}
+
+
+def test_list_saved_benchmarks_includes_extra_benchmark_dirs(tmp_path: Path, monkeypatch) -> None:
+    extra_root = tmp_path / "external_benchmarks"
+    extra_root.mkdir(parents=True, exist_ok=True)
+    config = configs.default_config_dict()
+    config["benchmark"]["name"] = "story2_generated"
+    config["benchmark"]["description"] = "Notebook-generated benchmark"
+    config["benchmark"]["dataset"]["name"] = "story2_dataset"
+    benchmark_path = extra_root / "story2_generated_benchmark.json"
+    benchmark_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    original_shipped_benchmark_paths = configs.shipped_benchmark_paths
+    monkeypatch.setattr(
+        configs,
+        "shipped_benchmark_paths",
+        lambda config_dir=None: {} if config_dir is None else original_shipped_benchmark_paths(config_dir=config_dir),
+    )
+    monkeypatch.setenv("TS_BENCHMARK_UI_EXTRA_BENCHMARK_DIRS", str(extra_root))
+
+    rows = configs.list_saved_benchmarks()
+
+    assert rows == [
+        {
+            "name": "story2_generated",
+            "description": "Notebook-generated benchmark",
+            "dataset": "story2_dataset",
+            "models": 0,
+            "metrics": 2,
+            "path": benchmark_path.resolve(),
+            "results_run_dir": None,
+            "results_updated_at": None,
+            "results_summary": {},
+            "origin": "official",
+            "read_only": True,
+        }
+    ]
+
+
+def test_previous_results_dir_for_path_prefers_sibling_run_dir(tmp_path: Path) -> None:
+    benchmark_config = _valid_benchmark_config(["hist_a"])
+    run_dir = tmp_path / "story2_custom_dataset"
+    benchmark_path = run_dir / "story2_generated_benchmark.json"
+    benchmark_path.parent.mkdir(parents=True, exist_ok=True)
+    benchmark_path.write_text(json.dumps(benchmark_config, indent=2), encoding="utf-8")
+    _write_run_artifacts(run_dir, benchmark_config=benchmark_config, model_name="hist_a", crps=0.4, energy_score=0.5)
+
+    previous = runs.previous_results_dir_for_path(benchmark_path)
+
+    assert previous == run_dir.resolve()
+
+
+def test_previous_results_dir_for_path_checks_extra_result_roots(tmp_path: Path, monkeypatch) -> None:
+    benchmark_path = tmp_path / "benchmarks" / "story2_generated_benchmark.json"
+    benchmark_path.parent.mkdir(parents=True, exist_ok=True)
+    benchmark_path.write_text(json.dumps(_valid_benchmark_config(["hist_a"]), indent=2), encoding="utf-8")
+
+    extra_results_root = tmp_path / "external_results"
+    run_dir = extra_results_root / "story2_generated_benchmark"
+    _write_run_artifacts(run_dir, benchmark_config=_valid_benchmark_config(["hist_a"]), model_name="hist_a", crps=0.4, energy_score=0.5)
+
+    monkeypatch.setenv("TS_BENCHMARK_UI_EXTRA_RESULTS_DIRS", str(extra_results_root))
+
+    previous = runs.previous_results_dir_for_path(benchmark_path)
+
+    assert previous == run_dir.resolve()
+
+
+def test_list_saved_datasets_includes_extra_dataset_dirs(tmp_path: Path, monkeypatch) -> None:
+    extra_root = tmp_path / "external_datasets"
+    extra_root.mkdir(parents=True, exist_ok=True)
+    dataset_path = extra_root / "story2_saved_dataset.json"
+    dataset_path.write_text(
+        json.dumps(
+            {
+                "name": "Story 2 Dataset",
+                "description": "Notebook dataset",
+                "provider": {
+                    "kind": "csv",
+                    "config": {"path": "/tmp/story2.csv"},
+                },
+                "schema": {
+                    "layout": "wide",
+                    "frequency": "B",
+                    "target_columns": ["asset_a", "asset_b"],
+                },
+                "semantics": {},
+                "metadata": {},
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("TS_BENCHMARK_UI_EXTRA_DATASET_DIRS", str(extra_root))
+
+    rows = datasets.list_saved_datasets()
+
+    assert any(row["name"] == "Story 2 Dataset" and Path(row["path"]) == dataset_path.resolve() for row in rows)
 
 
 def test_materialize_benchmark_results_merges_partial_model_run(tmp_path: Path, monkeypatch) -> None:

@@ -4,15 +4,65 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ts_benchmark.benchmark import load_benchmark_config, shipped_benchmark_paths
+from ts_benchmark.benchmark import benchmark_key_for_path, load_benchmark_config, shipped_benchmark_paths
 from ts_benchmark.serialization import to_jsonable
 
 from .. import BENCHMARK_CATALOG_DIR, OUTPUT_DIR, SAMPLE_DATA_DIR
+
+_EXTRA_BENCHMARK_DIRS_ENV = "TS_BENCHMARK_UI_EXTRA_BENCHMARK_DIRS"
+_IGNORED_EXTRA_BENCHMARK_FILENAMES = {
+    "benchmark_config.json",
+    "effective_benchmark.json",
+    "manifest.json",
+    "model_results.json",
+    "model_infos.json",
+    "run.json",
+    "summary.json",
+}
+
+
+def _extra_catalog_paths(env_name: str) -> list[Path]:
+    raw = str(os.getenv(env_name) or "").strip()
+    if not raw:
+        return []
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for part in raw.split(os.pathsep):
+        value = str(part).strip()
+        if not value:
+            continue
+        path = Path(value).expanduser().resolve()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _benchmark_paths_from_root(root: Path) -> dict[str, Path]:
+    if root.is_file():
+        if root.suffix.lower() != ".json":
+            return {}
+        return {benchmark_key_for_path(root): root.resolve()}
+    return {
+        key: path
+        for key, path in shipped_benchmark_paths(config_dir=root).items()
+        if path.name not in _IGNORED_EXTRA_BENCHMARK_FILENAMES and not path.name.endswith(".meta.json")
+    }
+
+
+def extra_benchmark_paths() -> dict[str, Path]:
+    paths: dict[str, Path] = {}
+    for root in _extra_catalog_paths(_EXTRA_BENCHMARK_DIRS_ENV):
+        for key, path in _benchmark_paths_from_root(root).items():
+            paths.setdefault(key, path)
+    return paths
 
 
 def example_paths() -> dict[str, Path]:
@@ -97,7 +147,10 @@ def save_config_dict(path: Path, config: dict[str, Any]) -> None:
 
 def saved_benchmark_paths(benchmark_dir: Path | None = None) -> dict[str, Path]:
     if benchmark_dir is None:
-        return shipped_benchmark_paths()
+        paths = dict(shipped_benchmark_paths())
+        for key, path in extra_benchmark_paths().items():
+            paths.setdefault(key, path)
+        return paths
     return {
         path.stem: path
         for path in sorted(benchmark_dir.glob("*.json"))

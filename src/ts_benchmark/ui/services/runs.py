@@ -23,6 +23,8 @@ from ts_benchmark.serialization import to_jsonable
 
 from .. import APP_ROOT, BENCHMARK_RESULTS_DIR, OUTPUT_DIR, RUNTIME_DIR, SRC_ROOT
 
+_EXTRA_RESULTS_DIRS_ENV = "TS_BENCHMARK_UI_EXTRA_RESULTS_DIRS"
+
 
 def build_temp_config_file(config: dict[str, Any]) -> Path:
     tmp = tempfile.NamedTemporaryFile(
@@ -147,6 +149,28 @@ def discover_local_runs(output_root: Path = OUTPUT_DIR) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _extra_results_roots() -> list[Path]:
+    raw = str(os.getenv(_EXTRA_RESULTS_DIRS_ENV) or "").strip()
+    if not raw:
+        return []
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for part in raw.split(os.pathsep):
+        value = str(part).strip()
+        if not value:
+            continue
+        path = Path(value).expanduser().resolve()
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        paths.append(path)
+    return paths
+
+
+def _looks_like_results_dir(path: Path) -> bool:
+    return path.is_dir() and (path / "metrics.csv").exists()
 
 
 def _read_optional_json(path: Path) -> dict[str, Any] | None:
@@ -278,9 +302,19 @@ def benchmark_results_dir_for_path(benchmark_path: Path) -> Path:
 
 def previous_results_dir_for_path(benchmark_path: Path) -> Path | None:
     benchmark_path = Path(benchmark_path).expanduser().resolve()
+    sibling_results_dir = benchmark_path.parent
+    if _looks_like_results_dir(sibling_results_dir):
+        return sibling_results_dir
     local_results_dir = benchmark_results_dir_for_path(benchmark_path)
     if local_results_dir.exists():
         return local_results_dir
+    benchmark_key = benchmark_key_for_path(benchmark_path)
+    for root in _extra_results_roots():
+        if _looks_like_results_dir(root) and (root == sibling_results_dir or (root / benchmark_path.name).exists()):
+            return root
+        candidate = root / benchmark_key
+        if _looks_like_results_dir(candidate):
+            return candidate.resolve()
     baseline_dir = packaged_baseline_dir(benchmark_path)
     if baseline_dir is not None:
         return baseline_dir
