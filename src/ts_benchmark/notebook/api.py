@@ -39,6 +39,10 @@ from ..run import BenchmarkRunArtifacts, run_benchmark_from_config
 from ..run.storage import dataset_summary
 from ..serialization import to_jsonable
 from ..utils import JsonObject, StringMap
+from ..ui.services.datasets import save_dataset_definition as _save_dataset_definition
+from ..ui.services.model_catalog import list_saved_catalog_models as _list_saved_catalog_models
+from ..ui.services.model_catalog import save_catalog_model as _save_catalog_model
+from ..ui.services.model_catalog import saved_model_paths as _saved_model_paths
 from ..ui.services.runs import (
     load_run_artifacts as _load_saved_run_artifacts,
     materialize_benchmark_results as _materialize_benchmark_results,
@@ -432,6 +436,65 @@ def _to_model_config(spec: NotebookModelSpec) -> ModelConfig:
     )
 
 
+def _catalog_model_payload_from_spec(spec: NotebookModelSpec) -> dict[str, Any]:
+    metadata = dict(spec.metadata)
+    if spec.pipeline_name != "raw" or list(spec.pipeline_steps):
+        metadata.setdefault(
+            "notebook_pipeline",
+            {
+                "name": str(spec.pipeline_name or "raw"),
+                "steps": [dict(step) for step in list(spec.pipeline_steps or [])],
+            },
+        )
+    execution = _coerce_execution_config(spec.execution, default_mode="inprocess")
+    if execution.mode != "inprocess" or execution.venv or execution.python:
+        metadata.setdefault(
+            "notebook_execution",
+            {
+                "mode": execution.mode,
+                "venv": execution.venv,
+                "python": execution.python,
+                "cwd": execution.cwd,
+                "pythonpath": list(execution.pythonpath),
+                "env": dict(execution.env),
+            },
+        )
+    return {
+        "name": str(spec.name),
+        "description": "" if spec.description is None else str(spec.description),
+        "reference": {
+            "kind": str(spec.reference_kind),
+            "value": str(spec.reference_value),
+        },
+        "params": dict(spec.params),
+        "metadata": metadata,
+    }
+
+
+def _saved_dataset_payload_from_spec(spec: NotebookDatasetSpec) -> dict[str, Any]:
+    provider_config = dict(spec.provider_params)
+    provider_config["path"] = str(Path(spec.path).expanduser().resolve())
+    return {
+        "name": "" if spec.name is None else str(spec.name),
+        "description": "" if spec.description is None else str(spec.description),
+        "provider": {
+            "kind": str(spec.source),
+            "config": provider_config,
+        },
+        "schema": {
+            "layout": str(spec.layout or "wide"),
+            "time_column": spec.time_column,
+            "series_id_columns": list(spec.series_id_columns),
+            "target_columns": list(spec.target_columns),
+            "feature_columns": list(spec.feature_columns),
+            "static_feature_columns": list(spec.static_feature_columns),
+            "frequency": spec.frequency,
+        },
+        "semantics": dict(spec.semantics),
+        "metadata": dict(spec.metadata),
+    }
+
+
 def _notebook_models_to_add(
     *,
     with_model: NotebookModelSpec | Mapping[str, Any] | None,
@@ -611,6 +674,50 @@ def entrypoint_model(
         description=description,
         metadata=dict(metadata or {}),
     )
+
+
+def save_model_to_catalog(
+    model: NotebookModelSpec | Mapping[str, Any],
+    *,
+    model_dir: str | Path | None = None,
+) -> Path:
+    """Persist a notebook model into the Streamlit model catalog.
+
+    If the same model reference is already cataloged, the existing catalog path
+    is returned so notebook promotion remains idempotent.
+    """
+
+    spec = _normalize_notebook_model_spec(model)
+    payload = _catalog_model_payload_from_spec(spec)
+    target_dir = None if model_dir is None else Path(model_dir).expanduser().resolve()
+    try:
+        if target_dir is None:
+            return _save_catalog_model(payload)
+        return _save_catalog_model(payload, model_dir=target_dir)
+    except ValueError as exc:
+        reference = dict(payload.get("reference") or {})
+        ref_kind = str(reference.get("kind") or "").strip()
+        ref_value = str(reference.get("value") or "").strip()
+        existing_entries = (
+            _list_saved_catalog_models()
+            if target_dir is None
+            else _list_saved_catalog_models(model_dir=target_dir)
+        )
+        for entry in existing_entries:
+            entry_ref = dict(entry.get("reference") or {})
+            if str(entry_ref.get("kind") or "").strip() != ref_kind:
+                continue
+            if str(entry_ref.get("value") or "").strip() != ref_value:
+                continue
+            paths = _saved_model_paths() if target_dir is None else _saved_model_paths(model_dir=target_dir)
+            for path in paths.values():
+                try:
+                    existing_payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if str(existing_payload.get("name") or "").strip() == str(entry.get("name") or "").strip():
+                    return path.resolve()
+        raise exc
 
 
 def provision_adapter_venv(
@@ -855,6 +962,20 @@ def parquet_dataset(path: str | Path, **kwargs: Any) -> NotebookDatasetSpec:
     """Create a Parquet-backed notebook dataset spec."""
 
     return tabular_dataset(path, source="parquet", **kwargs)
+
+
+def save_dataset_definition(
+    dataset: NotebookDatasetSpec | Mapping[str, Any],
+    *,
+    dataset_dir: str | Path | None = None,
+) -> Path:
+    """Persist a notebook dataset spec into the saved-dataset catalog format."""
+
+    spec = _normalize_notebook_dataset_spec(dataset)
+    payload = _saved_dataset_payload_from_spec(spec)
+    if dataset_dir is None:
+        return _save_dataset_definition(payload)
+    return _save_dataset_definition(payload, dataset_dir=Path(dataset_dir).expanduser().resolve())
 
 
 def _normalize_artifact_name(name: object) -> str:
@@ -1697,6 +1818,26 @@ class NotebookRun:
         left = self.metrics(include_metadata=False).add_suffix("_current")
         right = other_run.metrics(include_metadata=False).add_suffix("_compare")
         return left.join(right, how="outer")
+
+
+def save_benchmark_definition(
+    config_or_run: NotebookRun | BenchmarkConfig | Mapping[str, Any] | str | Path,
+    path: str | Path,
+) -> Path:
+    """Persist a benchmark definition or notebook run config as JSON."""
+
+    if isinstance(config_or_run, NotebookRun):
+        payload = config_or_run.config()
+    elif isinstance(config_or_run, BenchmarkConfig):
+        payload = dump_benchmark_config(config_or_run)
+    elif isinstance(config_or_run, Mapping):
+        payload = to_jsonable(dict(config_or_run))
+    else:
+        payload = dump_benchmark_config(load_benchmark_config(config_or_run))
+    target = Path(path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return target
 
 
 def run_benchmark(

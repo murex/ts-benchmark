@@ -19,6 +19,9 @@ from ts_benchmark.notebook import (
     load_run,
     provision_adapter_venv,
     run_benchmark,
+    save_benchmark_definition,
+    save_dataset_definition,
+    save_model_to_catalog,
 )
 from ts_benchmark.ui.services.runs import benchmark_results_dir_for_path, materialize_benchmark_results
 
@@ -553,3 +556,84 @@ def test_run_benchmark_can_override_dataset_with_notebook_dataset_spec(tmp_path:
     dataset_view = run.dataset_frame()
     assert dataset_view.info["source"] == "csv"
     assert dataset_view.frame.shape == (100, 2)
+
+
+def test_save_model_to_catalog_persists_notebook_model(tmp_path: Path) -> None:
+    external_model_path = tmp_path / "tiny_external_model.py"
+    _write_external_entrypoint_model(external_model_path)
+    model_spec = entrypoint_model(
+        "catalog_willow_like_model",
+        f"{external_model_path}:build_estimator",
+        shift=0.5,
+    )
+
+    saved_path = save_model_to_catalog(model_spec, model_dir=tmp_path / "model_catalog")
+    payload = json.loads(saved_path.read_text(encoding="utf-8"))
+
+    assert saved_path.exists()
+    assert payload["name"] == "catalog_willow_like_model"
+    assert payload["reference"]["kind"] == "entrypoint"
+    assert payload["reference"]["value"] == f"{external_model_path}:build_estimator"
+    assert payload["params"]["shift"] == 0.5
+
+
+def test_save_model_to_catalog_reuses_existing_reference(tmp_path: Path) -> None:
+    external_model_path = tmp_path / "tiny_external_model.py"
+    _write_external_entrypoint_model(external_model_path)
+    model_dir = tmp_path / "model_catalog"
+
+    first = save_model_to_catalog(
+        entrypoint_model(
+            "first_name",
+            f"{external_model_path}:build_estimator",
+            shift=0.5,
+        ),
+        model_dir=model_dir,
+    )
+    second = save_model_to_catalog(
+        entrypoint_model(
+            "second_name",
+            f"{external_model_path}:build_estimator",
+            shift=0.5,
+        ),
+        model_dir=model_dir,
+    )
+
+    assert first == second
+    payload = json.loads(first.read_text(encoding="utf-8"))
+    assert payload["name"] == "first_name"
+
+
+def test_save_dataset_definition_persists_notebook_dataset_spec(tmp_path: Path) -> None:
+    csv_path = tmp_path / "returns.csv"
+    _write_returns_csv(csv_path)
+    dataset_spec = csv_dataset(
+        csv_path,
+        name="Story 2 Dataset",
+        description="Notebook-saved CSV dataset",
+        time_column="date",
+        target_columns=["asset_a", "asset_b"],
+        frequency="B",
+        semantics={"target_kind": "returns", "return_kind": "simple"},
+    )
+
+    saved_path = save_dataset_definition(dataset_spec, dataset_dir=tmp_path / "datasets")
+    payload = json.loads(saved_path.read_text(encoding="utf-8"))
+
+    assert saved_path.exists()
+    assert payload["name"] == "Story 2 Dataset"
+    assert payload["provider"]["kind"] == "csv"
+    assert payload["provider"]["config"]["path"] == str(csv_path.resolve())
+    assert payload["schema"]["target_columns"] == ["asset_a", "asset_b"]
+
+
+def test_save_benchmark_definition_persists_notebook_run_config(tmp_path: Path) -> None:
+    output_dir = tmp_path / "saved_benchmark_run"
+    run = run_benchmark(_notebook_smoke_config(output_dir=output_dir))
+
+    saved_path = save_benchmark_definition(run, tmp_path / "generated_benchmark.json")
+    payload = json.loads(saved_path.read_text(encoding="utf-8"))
+
+    assert saved_path.exists()
+    assert payload["benchmark"]["name"] == "notebook_smoke"
+    assert payload["benchmark"]["models"][0]["name"] == "debug_model"

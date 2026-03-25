@@ -13,6 +13,9 @@ from .api import (
     parquet_dataset,
     provision_adapter_venv,
     run_benchmark,
+    save_benchmark_definition,
+    save_dataset_definition,
+    save_model_to_catalog,
     show,
     tabular_dataset,
 )
@@ -30,6 +33,9 @@ __all__ = [
     "parquet_dataset",
     "provision_adapter_venv",
     "run_benchmark",
+    "save_benchmark_definition",
+    "save_dataset_definition",
+    "save_model_to_catalog",
     "show",
     "tabular_dataset",
 ]
