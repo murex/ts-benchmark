@@ -147,9 +147,10 @@ def render() -> None:
         else:
             options = {str(row["name"]): row for row in benchmarks_with_results}
             selected_name = st.selectbox(
-                "Show latest results for",
+                "Benchmark results",
                 options=list(options),
                 key="home.results.benchmark",
+                label_visibility="collapsed",
             )
             selected_row = dict(options[selected_name])
             selected_run = Path(str(selected_row["results_run_dir"]))
@@ -159,19 +160,6 @@ def render() -> None:
                 st.error(f"Could not load saved results for '{selected_row['name']}': {exc}")
             else:
                 model_table = _result_model_table(artifacts)
-                result_summary = dict(selected_row.get("results_summary") or {})
-                status = str(dict(artifacts.get("run") or {}).get("status") or "unknown")
-                metric_names = _result_metric_names(artifacts, artifacts.get("metrics"))
-                summary = st.columns(4)
-                summary[0].metric("Benchmark", str(selected_row["name"]))
-                summary[1].metric("Status", status)
-                summary[2].metric("Models", str(0 if model_table is None else len(model_table.index)))
-                summary[3].metric("Metrics", str(len(metric_names)))
-                if selected_row.get("results_updated_at"):
-                    st.caption(f"Latest saved results updated on {selected_row['results_updated_at']}.")
-                elif result_summary:
-                    st.caption("Latest saved benchmark results are available.")
-
                 if model_table is None or model_table.empty:
                     st.info("No model metrics were saved for this benchmark result.")
                 else:

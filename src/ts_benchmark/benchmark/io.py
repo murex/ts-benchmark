@@ -326,6 +326,20 @@ def _parse_run_config(run_block: Mapping[str, Any]) -> RunConfig:
 def _parse_diagnostics_config(diagnostics_block: Mapping[str, Any] | None) -> DiagnosticsConfig:
     block = _as_mapping(diagnostics_block, field_name="diagnostics")
     smoke = _as_mapping(block.get("functional_smoke"), field_name="diagnostics.functional_smoke")
+    optional_smoke_threshold_keys = (
+        "mean_abs_error_max",
+        "std_ratio_min",
+        "std_ratio_max",
+        "crps_max",
+        "energy_score_max",
+        "cross_correlation_error_max",
+    )
+    if smoke.get("enabled") and smoke and all(smoke.get(key) is None for key in optional_smoke_threshold_keys):
+        smoke = {
+            key: value
+            for key, value in smoke.items()
+            if key not in optional_smoke_threshold_keys
+        }
     return DiagnosticsConfig(**{**block, "functional_smoke": FunctionalSmokeConfig(**smoke)})
 
 

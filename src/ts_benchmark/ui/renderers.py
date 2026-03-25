@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 import numpy as np
@@ -63,10 +64,28 @@ def _primitive_input(label: str, value: Any, *, key: str) -> Any:
     if isinstance(value, int) and not isinstance(value, bool):
         return st.number_input(label, value=int(value), step=1, key=key)
     if isinstance(value, float):
-        return st.number_input(label, value=float(value), key=key)
+        return render_float_input(label, float(value), key=key)
     if value is None:
         return st.text_input(label, value="", key=key)
     return st.text_input(label, value=str(value), key=key)
+
+
+def _float_widget_kwargs(value: float) -> dict[str, object]:
+    baseline = abs(float(value))
+    if baseline == 0.0:
+        return {"step": 0.001, "format": "%.6f"}
+    if baseline >= 0.01:
+        return {}
+    decimals = min(10, max(6, int(math.ceil(-math.log10(baseline))) + 2))
+    return {
+        "step": float(10 ** (-decimals + 1)),
+        "format": f"%.{decimals}f",
+    }
+
+
+def render_float_input(label: str, value: float, *, key: str) -> float:
+    kwargs = _float_widget_kwargs(float(value))
+    return float(st.number_input(label, value=float(value), key=key, **kwargs))
 
 
 def render_status_badge(status: str) -> None:

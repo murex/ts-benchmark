@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from ..renderers import render_structured_value
 from ..services.environment import discover_plugins_df
 from ..services.model_catalog import (
     build_file_entrypoint_value,
@@ -29,13 +28,10 @@ MODEL_CATALOG_PLUGIN_NAME_KEY = "model_catalog.add.plugin_name"
 MODEL_CATALOG_PLUGIN_NAME_DEFAULT_KEY = "model_catalog.add.plugin_name_default"
 MODEL_CATALOG_ENTRYPOINT_NAME_KEY = "model_catalog.add.entrypoint_name"
 MODEL_CATALOG_ENTRYPOINT_NAME_DEFAULT_KEY = "model_catalog.add.entrypoint_name_default"
-MODEL_CATALOG_ENTRYPOINT_MODE_KEY = "model_catalog.add.entrypoint_mode"
-MODEL_CATALOG_ENTRYPOINT_FILE_SOURCE_KEY = "model_catalog.add.entrypoint_file_source"
 MODEL_CATALOG_ENTRYPOINT_UPLOAD_MARKER_KEY = "model_catalog.add.entrypoint_upload_marker"
 MODEL_CATALOG_ENTRYPOINT_UPLOADED_PATH_KEY = "model_catalog.add.entrypoint_uploaded_path"
 MODEL_CATALOG_ENTRYPOINT_REPO_ROOT_KEY = "model_catalog.add.entrypoint_repo_root"
 MODEL_CATALOG_ENTRYPOINT_FILE_KEY = "model_catalog.add.entrypoint_file_select"
-MODEL_CATALOG_ENTRYPOINT_SYMBOL_KEY = "model_catalog.add.entrypoint_symbol"
 
 
 def _set_flash(level: str, message: str) -> None:
@@ -201,7 +197,8 @@ def _apply_pending_selection(catalog_names: list[str]) -> None:
 
 def _catalog_frame() -> pd.DataFrame:
     rows = list_model_catalog()
-    return pd.DataFrame(rows)
+    frame = pd.DataFrame(rows)
+    return frame.drop(columns=["status", "removable"], errors="ignore")
 
 
 def _selectable_catalog_names(catalog_frame: pd.DataFrame) -> list[str]:
@@ -251,9 +248,8 @@ def _render_selected_model_detail(selected_name: str) -> None:
     elif manifest.get("description"):
         st.caption(str(manifest["description"]))
 
-    action_cols = st.columns([1, 3])
     remove_disabled = not detail["removable"]
-    if action_cols[0].button(
+    if st.button(
         "Remove from catalog",
         disabled=remove_disabled,
         use_container_width=True,
@@ -271,10 +267,6 @@ def _render_selected_model_detail(selected_name: str) -> None:
 
     if resolution.get("error"):
         st.error(f"Resolution failed: {resolution['error']}")
-    else:
-        status = resolution.get("status")
-        if status:
-            action_cols[1].caption(f"Status: {status}")
 
     st.subheader("Parameters")
     explicit_rows, accepts_varargs = _simplified_parameter_rows(parameters)
@@ -286,16 +278,6 @@ def _render_selected_model_detail(selected_name: str) -> None:
         st.info("This model accepts additional free-form params.")
     else:
         st.info("No constructor or factory parameters were discovered for this model.")
-
-    st.subheader("Load details")
-    st.dataframe(
-        pd.DataFrame(_load_detail_rows(entry, resolution)),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    with st.expander("Manifest", expanded=False):
-        render_structured_value(manifest or {}, label="manifest", editable=False, key_prefix=f"model_manifest.{entry['name']}")
 
 
 def _render_plugin_add_form(catalog_frame: pd.DataFrame) -> None:
@@ -344,124 +326,65 @@ def _render_plugin_add_form(catalog_frame: pd.DataFrame) -> None:
 
 def _render_entrypoint_add_form() -> None:
     st.subheader("Add entrypoint")
-    entry_mode = st.selectbox(
-        "Entrypoint source",
-        options=["python_file", "module"],
-        format_func=lambda value: "Import path" if value == "module" else "Python file",
-        key=MODEL_CATALOG_ENTRYPOINT_MODE_KEY,
-    )
+    st.caption("Point to a Python file from your development repo. The catalog will infer the main public builder automatically.")
     entrypoint = ""
-    if entry_mode == "module":
-        st.caption("Use this only when your adapter is already importable in the benchmark environment.")
-        entrypoint = st.text_input(
-            "Import entrypoint",
-            value="",
-            placeholder="package.module:Builder",
-            key="model_catalog.add.entrypoint_value",
-        )
-    else:
-        file_source = st.selectbox(
-            "Model source",
-            options=["repo", "browse", "path"],
-            format_func=lambda value: {
-                "browse": "Browse from disk",
-                "repo": "Development repo",
-                "path": "Enter file path",
-            }[value],
-            key=MODEL_CATALOG_ENTRYPOINT_FILE_SOURCE_KEY,
-        )
-        file_path = ""
-        if file_source == "browse":
-            uploaded = st.file_uploader(
-                "Browse adapter file",
-                type=["py"],
-                key="model_catalog.add.entrypoint_upload",
-            )
-            file_path = _handle_uploaded_entrypoint_file(uploaded) or ""
-            if file_path:
-                st.caption(f"Uploaded file: {_display_path(file_path)}")
-        elif file_source == "repo":
-            repo_root = st.text_input(
-                "Model repository",
-                value=st.session_state.get(MODEL_CATALOG_ENTRYPOINT_REPO_ROOT_KEY, str(Path.cwd())),
-                placeholder="/path/to/your/model/repo",
-                key=MODEL_CATALOG_ENTRYPOINT_REPO_ROOT_KEY,
-            )
-            if repo_root:
-                try:
-                    candidates = find_repo_scenario_model_candidates(repo_root)
-                except Exception as exc:
-                    st.error(f"Could not browse repository: {exc}")
-                else:
-                    if candidates:
-                        file_options = list(dict.fromkeys(candidate["path"] for candidate in candidates))
-                        _sync_select_default(
-                            MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
-                            file_options,
-                            str(candidates[0]["path"]),
-                        )
-                        file_path = st.selectbox(
-                            "Detected model file",
-                            options=file_options,
-                            format_func=lambda value: _display_path(value),
-                            key=MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
-                        )
-                        st.caption("The first file exposing a ScenarioModel subclass is selected by default.")
-                    else:
-                        discovered_files = [str(path) for path in list_entrypoint_python_files(search_root=repo_root)]
-                        if discovered_files:
-                            _sync_select_default(
-                                MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
-                                discovered_files,
-                                str(discovered_files[0]),
-                            )
-                            file_path = st.selectbox(
-                                "Repository file",
-                                options=discovered_files,
-                                format_func=lambda value: _display_path(value),
-                                key=MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
-                            )
-                        else:
-                            st.info("No Python files were found under this repository root.")
+    file_path = ""
+    repo_root = st.text_input(
+        "Model repository",
+        value=st.session_state.get(MODEL_CATALOG_ENTRYPOINT_REPO_ROOT_KEY, str(Path.cwd())),
+        placeholder="/path/to/your/model/repo",
+        key=MODEL_CATALOG_ENTRYPOINT_REPO_ROOT_KEY,
+    )
+    if repo_root:
+        try:
+            candidates = find_repo_scenario_model_candidates(repo_root)
+        except Exception as exc:
+            st.error(f"Could not browse repository: {exc}")
         else:
-            file_path = st.text_input(
-                "Adapter file path",
-                value="",
-                placeholder="/path/to/adapter.py",
-                key="model_catalog.add.entrypoint_file_path",
-            )
-        if file_path:
-            try:
-                inspection = inspect_entrypoint_python_file(file_path)
-            except Exception as exc:
-                st.error(f"Could not inspect file: {exc}")
+            if candidates:
+                file_options = list(dict.fromkeys(candidate["path"] for candidate in candidates))
+                _sync_select_default(
+                    MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
+                    file_options,
+                    str(candidates[0]["path"]),
+                )
+                file_path = st.selectbox(
+                    "Detected model file",
+                    options=file_options,
+                    format_func=lambda value: _display_path(value),
+                    key=MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
+                )
+                st.caption("The first file exposing a ScenarioModel subclass is selected by default.")
             else:
-                symbols = inspection["symbols"]
-                if not symbols:
-                    st.warning("No public functions or classes were found in this file.")
-                else:
-                    symbol_names = [item["name"] for item in symbols]
+                discovered_files = [str(path) for path in list_entrypoint_python_files(search_root=repo_root)]
+                if discovered_files:
                     _sync_select_default(
-                        MODEL_CATALOG_ENTRYPOINT_SYMBOL_KEY,
-                        symbol_names,
-                        _preferred_symbol_name(inspection),
+                        MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
+                        discovered_files,
+                        str(discovered_files[0]),
                     )
-                    selected_symbol = st.selectbox(
-                        "Symbol",
-                        options=symbol_names,
-                        format_func=lambda name: next(
-                            (
-                                f"{item['name']} (ScenarioModel)"
-                                if item["name"] == name and bool(item.get("extends_scenario_model"))
-                                else f"{item['name']} ({item['kind']})"
-                            )
-                            for item in symbols
-                            if item["name"] == name
-                        ),
-                        key=MODEL_CATALOG_ENTRYPOINT_SYMBOL_KEY,
+                    file_path = st.selectbox(
+                        "Repository file",
+                        options=discovered_files,
+                        format_func=lambda value: _display_path(value),
+                        key=MODEL_CATALOG_ENTRYPOINT_FILE_KEY,
                     )
-                    entrypoint = build_file_entrypoint_value(inspection["path"], selected_symbol)
-                    st.caption(f"Derived entrypoint: {entrypoint}")
+                else:
+                    st.info("No Python files were found under this repository root.")
+    if file_path:
+        try:
+            inspection = inspect_entrypoint_python_file(file_path)
+        except Exception as exc:
+            st.error(f"Could not inspect file: {exc}")
+        else:
+            symbols = list(inspection.get("symbols") or [])
+            if not symbols:
+                st.warning("No public functions or classes were found in this file.")
+            else:
+                inferred_symbol = _preferred_symbol_name(inspection) or str(symbols[0]["name"])
+                entrypoint = build_file_entrypoint_value(inspection["path"], inferred_symbol)
+                st.caption(f"Using inferred symbol `{inferred_symbol}`")
+                st.caption(f"Derived entrypoint: {entrypoint}")
     default_name = _entrypoint_default_name(entrypoint)
     _sync_name_default(MODEL_CATALOG_ENTRYPOINT_NAME_KEY, MODEL_CATALOG_ENTRYPOINT_NAME_DEFAULT_KEY, default_name)
     add_cols = st.columns([2, 2, 1])

@@ -284,12 +284,12 @@
           "properties": {
             "enabled": {"type": "boolean", "default": false},
             "finite_required": {"type": "boolean", "default": true},
-            "mean_abs_error_max": {"type": ["number", "null"], "default": null},
-            "std_ratio_min": {"type": ["number", "null"], "default": null},
-            "std_ratio_max": {"type": ["number", "null"], "default": null},
-            "crps_max": {"type": ["number", "null"], "default": null},
-            "energy_score_max": {"type": ["number", "null"], "default": null},
-            "cross_correlation_error_max": {"type": ["number", "null"], "default": null}
+            "mean_abs_error_max": {"type": ["number", "null"], "default": 0.005},
+            "std_ratio_min": {"type": ["number", "null"], "default": 0.5},
+            "std_ratio_max": {"type": ["number", "null"], "default": 1.5},
+            "crps_max": {"type": ["number", "null"], "default": 0.05},
+            "energy_score_max": {"type": ["number", "null"], "default": 0.1},
+            "cross_correlation_error_max": {"type": ["number", "null"], "default": 1.0}
           }
         }
       }

@@ -12,12 +12,12 @@ from ..utils import JsonObject, StringMap
 class FunctionalSmokeConfig:
     enabled: bool = False
     finite_required: bool = True
-    mean_abs_error_max: float | None = None
-    std_ratio_min: float | None = None
-    std_ratio_max: float | None = None
-    crps_max: float | None = None
-    energy_score_max: float | None = None
-    cross_correlation_error_max: float | None = None
+    mean_abs_error_max: float | None = 0.005
+    std_ratio_min: float | None = 0.5
+    std_ratio_max: float | None = 1.5
+    crps_max: float | None = 0.05
+    energy_score_max: float | None = 0.1
+    cross_correlation_error_max: float | None = 1.0
 
 
 @dataclass

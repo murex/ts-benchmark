@@ -10,7 +10,6 @@ import streamlit as st
 
 from ts_benchmark.dataset.providers.synthetic import RegimeSwitchingFactorSVGenerator
 
-from ..renderers import render_json_advanced
 from ..services.datasets import (
     SUPPORTED_DATASET_SOURCES,
     delete_saved_dataset,
@@ -47,6 +46,21 @@ TABULAR_VALUE_MODE_LABELS = {
     "return": "Return",
     "log_return": "Log return",
 }
+
+
+def _render_section_heading(title: str, *, caption: str | None = None, level: str = "section") -> None:
+    font_size = "1.05rem" if level == "section" else "0.96rem"
+    margin_bottom = "0.35rem" if level == "section" else "0.25rem"
+    st.markdown(
+        (
+            f"<div style='font-size:{font_size}; font-weight:600; margin:0.2rem 0 {margin_bottom} 0;'>"
+            f"{title}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    if caption:
+        st.caption(caption)
 
 
 def _dataset_from_config() -> dict[str, Any]:
@@ -842,7 +856,7 @@ def _configured_tabular_preview(dataset: dict[str, Any], preview: pd.DataFrame) 
     return preview
 
 
-def _configured_tabular_preview_from_source(dataset: dict[str, Any], max_rows: int = 200) -> pd.DataFrame:
+def _configured_tabular_preview_from_source(dataset: dict[str, Any], max_rows: int = 5000) -> pd.DataFrame:
     provider = dict(dataset.get("provider") or {})
     source = str(provider.get("kind") or "").strip().lower()
     if source not in {"csv", "parquet"}:
@@ -915,7 +929,7 @@ def _build_preview_payload(dataset: dict[str, Any], tabular_inspection: dict[str
 
     if source in {"csv", "parquet"}:
         try:
-            return _configured_tabular_preview_from_source(dataset, max_rows=200), None
+            return _configured_tabular_preview_from_source(dataset, max_rows=5000), None
         except Exception as exc:
             return None, f"{type(exc).__name__}: {exc}"
 
@@ -923,14 +937,20 @@ def _build_preview_payload(dataset: dict[str, Any], tabular_inspection: dict[str
 
 
 def _render_preview_tab(dataset: dict[str, Any], preview_frame: pd.DataFrame | None, preview_error: str | None) -> None:
-    st.subheader("Preview")
-    summary_cols = st.columns(3)
-    summary_cols[0].metric("Dataset", str(dataset.get("name") or "<unsaved dataset>"))
-    summary_cols[1].metric(
-        "Source",
-        SOURCE_LABELS.get(str(dataset.get("provider", {}).get("kind") or ""), str(dataset.get("provider", {}).get("kind") or "")),
+    _render_section_heading("Preview")
+    preview_summary = pd.DataFrame(
+        [
+            {
+                "dataset": str(dataset.get("name") or "<unsaved dataset>"),
+                "source": SOURCE_LABELS.get(
+                    str(dataset.get("provider", {}).get("kind") or ""),
+                    str(dataset.get("provider", {}).get("kind") or ""),
+                ),
+                "frequency": _format_frequency(dataset.get("schema", {}).get("frequency")),
+            }
+        ]
     )
-    summary_cols[2].metric("Frequency", _format_frequency(dataset.get("schema", {}).get("frequency")))
+    st.dataframe(preview_summary, hide_index=True, use_container_width=True)
     description = str(dataset.get("description") or "").strip()
     if description:
         st.caption(description)
@@ -951,6 +971,7 @@ def _render_preview_tab(dataset: dict[str, Any], preview_frame: pd.DataFrame | N
     default_plot_columns = plot_candidates[: min(6, len(plot_candidates))]
 
     if plot_candidates:
+        _render_section_heading("Plot columns", level="subsection")
         selected_plot_columns = st.multiselect(
             "Plot columns",
             options=plot_candidates,
@@ -999,12 +1020,18 @@ def _render_data_quality_statistics(dataset: dict[str, Any], preview_frame: pd.D
         timestamps = pd.to_datetime(preview_frame[time_column], errors="coerce")
         duplicate_timestamps = int(timestamps.dropna().duplicated().sum())
 
-    summary_cols = st.columns(5)
-    summary_cols[0].metric("Rows", rows)
-    summary_cols[1].metric("Columns", columns)
-    summary_cols[2].metric("Missing cells", missing_cells)
-    summary_cols[3].metric("Completeness", f"{completeness:.1%}")
-    summary_cols[4].metric("Duplicate rows", duplicate_rows)
+    quality_summary = pd.DataFrame(
+        [
+            {
+                "rows": rows,
+                "columns": columns,
+                "missing_cells": missing_cells,
+                "completeness": f"{completeness:.1%}",
+                "duplicate_rows": duplicate_rows,
+            }
+        ]
+    )
+    st.dataframe(quality_summary, hide_index=True, use_container_width=True)
     if time_column and time_column in preview_frame.columns:
         st.caption(f"Duplicate timestamps in `{time_column}`: {duplicate_timestamps}")
 
@@ -1020,7 +1047,7 @@ def _render_data_quality_statistics(dataset: dict[str, Any], preview_frame: pd.D
             "unique": [int(preview_frame[column].nunique(dropna=True)) for column in preview_frame.columns],
         }
     )
-    st.caption("Column quality profile")
+    _render_section_heading("Column quality profile", level="subsection")
     st.dataframe(column_profile, hide_index=True, use_container_width=True)
 
 
@@ -1042,11 +1069,17 @@ def _render_time_series_statistics(dataset: dict[str, Any], preview_frame: pd.Da
     else:
         avg_abs_corr = 0.0
 
-    summary_cols = st.columns(4)
-    summary_cols[0].metric("Series", int(series_frame.shape[1]))
-    summary_cols[1].metric("Observations", int(series_frame.shape[0]))
-    summary_cols[2].metric("Avg variance", f"{float(variance.mean()):.4g}")
-    summary_cols[3].metric("Avg |corr|", f"{avg_abs_corr:.3f}")
+    series_summary = pd.DataFrame(
+        [
+            {
+                "series": int(series_frame.shape[1]),
+                "observations": int(series_frame.shape[0]),
+                "avg_variance": f"{float(variance.mean()):.4g}",
+                "avg_abs_corr": f"{avg_abs_corr:.3f}",
+            }
+        ]
+    )
+    st.dataframe(series_summary, hide_index=True, use_container_width=True)
 
     series_stats = pd.DataFrame(
         {
@@ -1061,13 +1094,13 @@ def _render_time_series_statistics(dataset: dict[str, Any], preview_frame: pd.Da
             "lag1_autocorr": [float(series_frame[column].autocorr(lag=1)) for column in series_frame.columns],
         }
     )
-    st.caption("Per-series statistics")
+    _render_section_heading("Per-series statistics", level="subsection")
     st.dataframe(series_stats, hide_index=True, use_container_width=True)
 
-    st.caption("Variance by series")
+    _render_section_heading("Variance by series", level="subsection")
     st.bar_chart(series_stats.set_index("series")[["variance"]], use_container_width=True)
 
-    st.caption("Correlation matrix")
+    _render_section_heading("Correlation matrix", level="subsection")
     st.dataframe(correlation.round(3), use_container_width=True)
 
     if correlation.shape[0] > 1:
@@ -1089,12 +1122,12 @@ def _render_time_series_statistics(dataset: dict[str, Any], preview_frame: pd.Da
             .head(10)
             .drop(columns=["abs_correlation"])
         )
-        st.caption("Top absolute correlation pairs")
+        _render_section_heading("Top absolute correlation pairs", level="subsection")
         st.dataframe(top_pairs, hide_index=True, use_container_width=True)
 
 
 def _render_statistics_tab(dataset: dict[str, Any], preview_frame: pd.DataFrame | None, preview_error: str | None) -> None:
-    st.subheader("Statistics")
+    _render_section_heading("Statistics")
     if preview_error:
         st.error(f"Statistics unavailable: {preview_error}")
         return
@@ -1150,8 +1183,7 @@ def render() -> None:
         dataset_view = str(dataset_view or st.session_state.get(DATA_STUDIO_DATASET_VIEW_KEY, "Definition"))
 
         if dataset_view == "Definition":
-            st.subheader("Definition")
-            st.caption("This is the dataset currently loaded into Data Studio.")
+            _render_section_heading("Definition", caption="This is the dataset currently loaded into Data Studio.")
             saved_message = st.session_state.pop(DATASET_SAVE_MESSAGE_KEY, None)
             if saved_message:
                 st.success(saved_message)
@@ -1197,8 +1229,6 @@ def render() -> None:
                     st.error(f"Could not save dataset: {type(exc).__name__}: {exc}")
                 else:
                     st.rerun()
-
-            render_json_advanced(dataset, label="Dataset definition")
 
         preview_frame, preview_error = _build_preview_payload(dataset, tabular_inspection)
 

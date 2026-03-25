@@ -13,7 +13,7 @@ from ..state import get_current_run_artifacts, get_selected_run_dir, set_selecte
 
 def render() -> None:
     st.header("Diagnostics")
-    st.caption("Inspect functional smoke checks, distribution summaries, per-window metrics, and model debug artifacts.")
+    st.caption("Inspect sanity checks, distribution summaries, metric traces, and model debug artifacts.")
 
     runs = discover_local_runs()
     selected_run = get_selected_run_dir()
@@ -41,15 +41,24 @@ def render() -> None:
         st.info("This run did not save diagnostics.")
         return
 
-    tabs = st.tabs(["Functional Smoke", "Distribution", "Per-window", "Model Debug"])
+    tabs = st.tabs(["Sanity checks", "Distribution", "Metric traces", "Model Debug"])
 
     with tabs[0]:
         summary = diagnostics.get("functional_smoke_summary")
         checks = diagnostics.get("functional_smoke_checks")
         if summary is not None:
             st.dataframe(summary, use_container_width=True, hide_index=True)
-        if checks is not None:
-            st.dataframe(checks, use_container_width=True, hide_index=True)
+        if checks is not None and not checks.empty:
+            selected_model = st.selectbox(
+                "Sanity check model",
+                options=sorted(checks["model"].astype(str).unique()),
+                key="diagnostics.sanity.model",
+            )
+            st.dataframe(
+                checks[checks["model"].astype(str) == selected_model],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     with tabs[1]:
         summary = diagnostics.get("distribution_summary")
@@ -63,7 +72,7 @@ def render() -> None:
     with tabs[2]:
         per_window = diagnostics.get("per_window_metrics")
         if per_window is None or per_window.empty:
-            st.info("No per-window metrics were saved.")
+            st.info("No metric traces were saved.")
         else:
             model_name = st.selectbox("Model", options=sorted(per_window["model"].unique()), key="diagnostics.window.model")
             metric_columns = [column for column in per_window.columns if column not in {"model", "context_index", "evaluation_timestamp"}]
@@ -79,4 +88,3 @@ def render() -> None:
         else:
             model_name = st.selectbox("Model", options=sorted(debug_artifacts), key="diagnostics.debug.model")
             render_structured_value(debug_artifacts[model_name], label=model_name, editable=False, key_prefix=f"diagnostics.debug.{model_name}")
-

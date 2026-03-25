@@ -287,10 +287,16 @@ def _render_definition(current: dict[str, Any]) -> None:
     selected_dataset = dict(benchmark.get("dataset") or {})
     models = list(benchmark.get("models") or [])
     metrics = list(benchmark.get("metrics") or [])
-    summary_cols = st.columns(3)
-    summary_cols[0].metric("Dataset", str(selected_dataset.get("name") or "Not selected"))
-    summary_cols[1].metric("Models", str(len(models)))
-    summary_cols[2].metric("Metrics", str(len(metrics)))
+    summary_frame = pd.DataFrame(
+        [
+            {
+                "dataset": str(selected_dataset.get("name") or "Not selected"),
+                "models": len(models),
+                "metrics": len(metrics),
+            }
+        ]
+    )
+    st.dataframe(summary_frame, use_container_width=True, hide_index=True)
 
 
 def _render_dataset(current: dict[str, Any]) -> None:
@@ -374,6 +380,8 @@ def _render_models(current: dict[str, Any]) -> None:
                     key_prefix=f"benchmarks.models.{index}",
                     allow_add_fields=False,
                     show_execution_controls=False,
+                    show_description=False,
+                    show_pipeline_steps=False,
                 )
 
 

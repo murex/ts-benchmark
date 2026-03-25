@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from .. import OUTPUT_DIR
-from ..renderers import render_cli_command, render_status_badge, render_structured_value
+from ..renderers import render_status_badge, render_structured_value
 from ..schema_forms import (
     render_benchmark_form,
     render_diagnostics_form,
@@ -50,6 +50,21 @@ from ..state import (
 RUN_LAB_BENCHMARK_KEY = "run_lab.benchmark"
 RUN_LAB_MODEL_SELECTION_KEY = "run_lab.models"
 RUN_LAB_MODEL_SIGNATURE_KEY = "run_lab.model_signature"
+
+
+def _render_section_heading(title: str, *, caption: str | None = None, level: str = "section") -> None:
+    font_size = "1.05rem" if level == "section" else "0.96rem"
+    margin_bottom = "0.35rem" if level == "section" else "0.25rem"
+    st.markdown(
+        (
+            f"<div style='font-size:{font_size}; font-weight:600; margin:0.2rem 0 {margin_bottom} 0;'>"
+            f"{title}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    if caption:
+        st.caption(caption)
 
 
 def _slugify_name(name: str) -> str:
@@ -98,23 +113,6 @@ def _render_output_form(current: dict[str, Any]) -> None:
         output["save_model_info"] = st.checkbox("Save model info", value=bool(output.get("save_model_info", True)))
     with cols[3]:
         output["save_summary"] = st.checkbox("Save summary", value=bool(output.get("save_summary", True)))
-
-
-def _execution_plan(config: dict[str, Any]) -> pd.DataFrame:
-    rows = []
-    for model in config.get("benchmark", {}).get("models", []) or []:
-        execution = dict(model.get("execution") or {})
-        reference = dict(model.get("reference") or {})
-        rows.append(
-            {
-                "model": model.get("name"),
-                "reference": f"{reference.get('kind')}:{reference.get('value')}",
-                "pipeline": dict(model.get("pipeline") or {}).get("name", "raw"),
-                "execution_mode": execution.get("mode", "inprocess"),
-                "runner": execution.get("venv") or execution.get("python") or "",
-            }
-        )
-    return pd.DataFrame(rows)
 
 
 def _reset_run_lab_state(*, preserve: set[str] | None = None) -> None:
@@ -206,18 +204,26 @@ def render() -> None:
         st.info("No official benchmarks are available yet.")
         return
 
+    _render_section_heading("Benchmark")
     current = _load_selected_benchmark(benchmark_row)
     benchmark = current.setdefault("benchmark", {})
     benchmark_name = str(benchmark.get("name") or benchmark_row["name"]).strip() or str(benchmark_row["name"])
     source_models = list(benchmark.get("models") or [])
     model_names = [str(model.get("name") or "") for model in source_models if str(model.get("name") or "").strip()]
 
-    summary_cols = st.columns(3)
-    summary_cols[0].metric("Dataset", str(benchmark_row.get("dataset") or "Not selected"))
-    summary_cols[1].metric("Models", str(len(model_names)))
-    summary_cols[2].metric(
-        "Latest results",
-        "Available" if benchmark_row.get("results_run_dir") else "Not run yet",
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "benchmark": benchmark_name,
+                    "dataset": str(benchmark_row.get("dataset") or "Not selected"),
+                    "models": len(model_names),
+                    "latest_results": "Available" if benchmark_row.get("results_run_dir") else "Not run yet",
+                }
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
     )
     if benchmark_row.get("results_updated_at"):
         st.caption(f"Latest results updated: {benchmark_row['results_updated_at']}")
@@ -244,47 +250,37 @@ def render() -> None:
     ]
     run_benchmark["models"] = run_models
 
-    with st.expander("Run settings", expanded=True):
+    editor_tabs = st.tabs(["Run Configuration", "Diagnostics", "Model Overrides"])
+
+    with editor_tabs[0]:
         render_benchmark_form(run_config, device_options=detect_devices())
-        st.caption("Output")
+        _render_section_heading("Output", level="subsection")
         _render_output_form(run_config)
-        st.caption("Tracking")
+        _render_section_heading("Tracking", level="subsection")
         render_tracking_form(run_config)
 
-    with st.expander("Diagnostics (Optional)", expanded=False):
-        st.caption("Diagnostics are optional debug outputs and smoke checks. Leave them off for normal benchmark runs.")
+    with editor_tabs[1]:
+        st.caption("Diagnostics are optional debug outputs and sanity checks. Leave them off for normal benchmark runs.")
         render_diagnostics_form(run_config)
 
-    if not run_models:
-        st.warning("Select at least one model to run this benchmark.")
-    else:
-        st.subheader("Model overrides")
-        st.caption("Optional. Changes here apply only to the run launched from Run Lab.")
-        for index, model in enumerate(run_models):
-            with st.expander(f"{index + 1}. {model['name']}", expanded=False):
-                render_model_params_editor(
-                    model,
-                    key_prefix=f"run_lab.models.{index}",
-                    allow_add_fields=False,
-                    show_execution_controls=False,
-                )
+    with editor_tabs[2]:
+        if not run_models:
+            st.warning("Select at least one model to run this benchmark.")
+        else:
+            st.caption("Optional. Changes here apply only to the run launched from Run Lab.")
+            for index, model in enumerate(run_models):
+                with st.expander(f"{index + 1}. {model['name']}", expanded=False):
+                    render_model_params_editor(
+                        model,
+                        key_prefix=f"run_lab.models.{index}",
+                        allow_add_fields=False,
+                        show_execution_controls=False,
+                        show_description=False,
+                        show_pipeline_steps=False,
+                    )
 
     effective = build_effective_config(run_config)
     set_effective_config(effective)
-
-    with st.expander("Advanced", expanded=False):
-        st.caption("Advanced runtime details for inspection and debugging.")
-        st.dataframe(_execution_plan(effective), use_container_width=True, hide_index=True)
-        render_structured_value(
-            {
-                "benchmark": effective.get("benchmark", {}),
-                "run": effective.get("run", {}),
-            },
-            label="runtime",
-            editable=False,
-            key_prefix="run_lab.runtime",
-        )
-        render_cli_command("ts-benchmark run <effective-benchmark.json>")
 
     run_info = get_current_run()
     artifacts = get_current_run_artifacts()
@@ -337,7 +333,7 @@ def render() -> None:
         set_current_run(updated)
         run_info = updated
 
-    st.subheader("Current run")
+    _render_section_heading("Current Run")
     render_status_badge(str(run_info.get("status", "unknown")))
     render_structured_value(
         {
@@ -354,7 +350,7 @@ def render() -> None:
         key_prefix="run_lab.current_run",
     )
     log_path = Path(run_info["log_path"])
-    st.caption("CLI log tail")
+    _render_section_heading("CLI Log Tail", level="subsection")
     st.code(read_log_tail(log_path), language="text")
 
     if run_info.get("status") == "succeeded" and run_info.get("output_dir"):

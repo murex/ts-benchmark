@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -12,7 +13,7 @@ import streamlit as st
 from ..renderers import render_structured_value
 from ..services.configs import list_saved_benchmarks, load_config_dict
 from ..services.runs import load_run_artifacts
-from ..state import get_compare_run_dir, get_current_config_path, get_selected_run_dir, set_compare_run_dir, set_selected_run_dir
+from ..state import get_current_config_path, get_selected_run_dir, set_selected_run_dir
 
 RESULTS_METADATA_COLUMNS = {
     "dataset_name",
@@ -33,6 +34,21 @@ RESULTS_METADATA_COLUMNS = {
 }
 
 
+def _render_section_heading(title: str, *, caption: str | None = None, level: str = "section") -> None:
+    font_size = "1.05rem" if level == "section" else "0.96rem"
+    margin_bottom = "0.35rem" if level == "section" else "0.25rem"
+    st.markdown(
+        (
+            f"<div style='font-size:{font_size}; font-weight:600; margin:0.2rem 0 {margin_bottom} 0;'>"
+            f"{title}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    if caption:
+        st.caption(caption)
+
+
 def _scenario_band_dataframe(samples: np.ndarray, realized: np.ndarray, asset_index: int) -> pd.DataFrame:
     asset_samples = np.asarray(samples[:, :, asset_index], dtype=float)
     q05, q50, q95 = np.quantile(asset_samples, [0.05, 0.50, 0.95], axis=0)
@@ -44,6 +60,111 @@ def _scenario_band_dataframe(samples: np.ndarray, realized: np.ndarray, asset_in
             "p95": q95,
         }
     )
+
+
+def _scenario_sample_paths_dataframe(samples: np.ndarray, asset_index: int, *, max_paths: int) -> pd.DataFrame | None:
+    asset_samples = np.asarray(samples[:, :, asset_index], dtype=float)
+    if asset_samples.ndim != 2 or asset_samples.shape[0] == 0:
+        return None
+    n_paths = asset_samples.shape[0]
+    selected = np.arange(n_paths) if n_paths <= max_paths else np.linspace(0, n_paths - 1, num=max_paths, dtype=int)
+    rows: list[dict[str, float | int | str]] = []
+    for plotted_index, sample_index in enumerate(selected):
+        for step, value in enumerate(asset_samples[int(sample_index)]):
+            rows.append(
+                {
+                    "step": int(step),
+                    "value": float(value),
+                    "path": f"path_{plotted_index + 1}",
+                }
+            )
+    return None if not rows else pd.DataFrame(rows)
+
+
+def _render_scenario_band_chart(frame: pd.DataFrame, *, sample_paths: pd.DataFrame | None = None) -> None:
+    chart_frame = frame.reset_index(names="step")
+    band = (
+        alt.Chart(chart_frame)
+        .mark_area(opacity=0.2, color="#4c78a8")
+        .encode(
+            x=alt.X("step:Q", title="Forecast step"),
+            y=alt.Y("p05:Q", title="Value"),
+            y2="p95:Q",
+            tooltip=[
+                alt.Tooltip("step:Q", title="Step"),
+                alt.Tooltip("p05:Q", format=".6f"),
+                alt.Tooltip("p95:Q", format=".6f"),
+            ],
+        )
+    )
+    median = (
+        alt.Chart(chart_frame)
+        .mark_line(color="#4c78a8", strokeWidth=2)
+        .encode(
+            x="step:Q",
+            y="median:Q",
+            tooltip=[
+                alt.Tooltip("step:Q", title="Step"),
+                alt.Tooltip("median:Q", format=".6f"),
+            ],
+        )
+    )
+    realized = (
+        alt.Chart(chart_frame)
+        .mark_line(color="#f58518", strokeWidth=2)
+        .encode(
+            x="step:Q",
+            y="realized:Q",
+            tooltip=[
+                alt.Tooltip("step:Q", title="Step"),
+                alt.Tooltip("realized:Q", format=".6f"),
+            ],
+        )
+    )
+    chart = band + median + realized
+    if sample_paths is not None and not sample_paths.empty:
+        paths = (
+            alt.Chart(sample_paths)
+            .mark_line(color="#888888", opacity=0.25, strokeWidth=1)
+            .encode(
+                x="step:Q",
+                y="value:Q",
+                detail="path:N",
+            )
+        )
+        chart = chart + paths
+    st.altair_chart(chart.interactive(), use_container_width=True)
+
+
+def _render_array_artifact(title: str, array: object, *, key_prefix: str) -> None:
+    _render_section_heading(title, level="subsection")
+    if array is None:
+        st.info("Unavailable")
+        return
+    values = np.asarray(array)
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "shape": str(tuple(int(dim) for dim in values.shape)),
+                    "dtype": str(values.dtype),
+                    "size": int(values.size),
+                }
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    with st.expander(f"{title} preview", expanded=False):
+        st.code(
+            np.array2string(
+                values,
+                precision=6,
+                threshold=120,
+                max_line_width=160,
+            ),
+            language="text",
+        )
 
 
 def _default_selected_benchmark(rows: list[dict[str, object]]) -> str | None:
@@ -297,47 +418,24 @@ def _model_overview_frame(artifacts: dict[str, object]) -> pd.DataFrame | None:
     frame = None if metrics is None else metrics.copy()
     metric_names = _metric_names(artifacts, frame)
     model_results = artifacts.get("model_results") or []
-    extras = []
+    failed_rows = []
     for item in model_results:
         name = str(item.get("model_name") or "").strip()
-        if not name:
+        error = str(dict(item.get("metadata") or {}).get("error") or "").strip()
+        if not name or not error:
             continue
-        reference = dict(item.get("reference") or {})
-        pipeline = item.get("pipeline")
-        plugin_info = dict(item.get("plugin_info") or {})
-        manifest = dict(plugin_info.get("manifest") or {})
-        metadata = dict(item.get("metadata") or {})
-        error = str(metadata.get("error") or "").strip()
-        extras.append(
-            {
-                "model": name,
-                "display_name": manifest.get("display_name") or "",
-                "reference": f"{reference.get('kind')}:{reference.get('value')}" if reference else "",
-                "pipeline": pipeline.get("name") if isinstance(pipeline, dict) else (pipeline or ""),
-                "status": "Failed" if error else "Completed",
-                "error": error,
-            }
-        )
-    if frame is None or frame.empty:
-        if not extras:
-            return None
-        frame = pd.DataFrame(extras)
-    elif extras:
-        frame = pd.DataFrame(extras).merge(frame, on="model", how="outer")
+        failed_rows.append({"model": name})
     preferred = ["model"]
-    if "display_name" in frame.columns and any(str(value).strip() and str(value).strip() != str(model).strip() for value, model in zip(frame["display_name"], frame["model"])):
-        preferred.append("display_name")
-    if "status" in frame.columns and frame["status"].fillna("").astype(str).str.strip().any():
-        preferred.append("status")
-    if "reference" in frame.columns and frame["reference"].fillna("").astype(str).str.strip().any():
-        preferred.append("reference")
-    if "pipeline" in frame.columns and frame["pipeline"].fillna("").astype(str).str.strip().any():
-        preferred.append("pipeline")
+    if frame is None or frame.empty:
+        if not failed_rows:
+            return None
+        frame = pd.DataFrame(failed_rows)
+    elif failed_rows:
+        failed_frame = pd.DataFrame(failed_rows)
+        frame = frame.merge(failed_frame, on="model", how="outer")
     preferred.extend([name for name in metric_names if name in frame.columns])
     if "average_rank" in frame.columns:
         preferred.append("average_rank")
-    if "error" in frame.columns and frame["error"].fillna("").astype(str).str.strip().any():
-        preferred.append("error")
     overview = frame[preferred].copy()
     if "average_rank" in overview.columns:
         overview = overview.sort_values("average_rank", ascending=True, na_position="last")
@@ -350,18 +448,27 @@ def _render_diagnostics_tab(artifacts: dict[str, object]) -> None:
         st.info("This benchmark result did not save diagnostics.")
         return
 
-    tabs = st.tabs(["Functional smoke", "Distribution", "Per-window"])
+    tabs = st.tabs(["Sanity checks", "Distribution", "Metric traces"])
 
     with tabs[0]:
         summary = diagnostics.get("functional_smoke_summary")
         checks = diagnostics.get("functional_smoke_checks")
         if summary is None and checks is None:
-            st.info("No functional smoke diagnostics were saved.")
+            st.info("No sanity check diagnostics were saved.")
         else:
             if summary is not None:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
-            if checks is not None:
-                st.dataframe(checks, use_container_width=True, hide_index=True)
+            if checks is not None and not checks.empty:
+                selected_model = st.selectbox(
+                    "Sanity check model",
+                    options=sorted(checks["model"].astype(str).unique()),
+                    key="results.diagnostics.sanity.model",
+                )
+                st.dataframe(
+                    checks[checks["model"].astype(str) == selected_model],
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
     with tabs[1]:
         summary = diagnostics.get("distribution_summary")
@@ -386,7 +493,7 @@ def _render_diagnostics_tab(artifacts: dict[str, object]) -> None:
     with tabs[2]:
         per_window = diagnostics.get("per_window_metrics")
         if per_window is None or per_window.empty:
-            st.info("No per-window diagnostics were saved.")
+            st.info("No metric traces were saved.")
         else:
             model_name = st.selectbox(
                 "Model",
@@ -408,12 +515,7 @@ def _render_diagnostics_tab(artifacts: dict[str, object]) -> None:
             st.dataframe(subset.round(6), use_container_width=True, hide_index=True)
 
 
-def _render_technical_debug_tab(artifacts: dict[str, object], selected_row: dict[str, object], selected_run: Path) -> None:
-    ranks = artifacts.get("ranks")
-    if ranks is not None:
-        st.subheader("Rank Table")
-        st.dataframe(ranks, use_container_width=True, hide_index=True)
-
+def _available_debug_models(artifacts: dict[str, object]) -> list[str]:
     model_results = artifacts.get("model_results") or []
     debug_artifacts = dict((artifacts.get("diagnostics") or {}).get("model_debug_artifacts") or {})
     metrics_frame = artifacts.get("metrics")
@@ -422,7 +524,7 @@ def _render_technical_debug_tab(artifacts: dict[str, object], selected_row: dict
         for name in metrics_frame.get("model", pd.Series(dtype=object)).tolist()
         if str(name).strip()
     ]
-    available_models = sorted(
+    return sorted(
         {
             *[str(item.get("model_name") or "") for item in model_results if str(item.get("model_name") or "").strip()],
             *[str(name) for name in debug_artifacts],
@@ -434,71 +536,60 @@ def _render_technical_debug_tab(artifacts: dict[str, object], selected_row: dict
             *metric_models,
         }
     )
-    if available_models:
-        st.subheader("Model Result Details")
-        by_name = {str(item.get("model_name")): item for item in model_results}
-        selected_model = st.selectbox("Model", options=available_models, key="results.technical.model")
-        report_text = _build_model_debug_report(
-            selected_model,
-            artifacts,
-            benchmark_name=str(selected_row.get("name") or "benchmark"),
-        )
-        st.download_button(
-            "Download model debug report",
-            data=report_text,
-            file_name=f"{str(selected_row.get('name') or 'benchmark').replace(' ', '_')}_{selected_model}_technical_debug.txt",
-            mime="text/plain",
-            key=f"results.technical.download.{selected_model}",
-            use_container_width=True,
-        )
-        if selected_model in by_name:
-            render_structured_value(
-                by_name[selected_model],
-                label=selected_model,
-                editable=False,
-                key_prefix=f"results.technical.model_result.{selected_model}",
-            )
-        else:
-            st.info("No structured model result payload was saved for this model.")
 
-    if debug_artifacts:
-        st.subheader("Model Debug Artifacts")
-        selected_model = str(st.session_state.get("results.technical.model") or sorted(debug_artifacts)[0])
-        if selected_model in debug_artifacts:
-            render_structured_value(
-                debug_artifacts[selected_model],
-                label=selected_model,
-                editable=False,
-                key_prefix=f"results.technical.debug_artifacts.{selected_model}",
-            )
-        else:
-            st.info("No model-specific debug artifacts were saved for the selected model.")
 
-    with st.expander("Run Record", expanded=False):
-        render_structured_value(
-            {
-                "benchmark": {
-                    "name": selected_row.get("name"),
-                    "path": str(selected_row.get("path")),
-                    "results_updated_at": selected_row.get("results_updated_at"),
-                },
-                "run_dir": str(selected_run),
-                "run": artifacts.get("run") or {},
-                "summary": artifacts.get("summary") or {},
-                "tracking": artifacts.get("tracking") or {},
-            },
-            label="run",
-            editable=False,
-            key_prefix="results.technical.run_record",
-        )
+def _render_model_debug_tab(artifacts: dict[str, object], selected_row: dict[str, object]) -> None:
+    model_results = artifacts.get("model_results") or []
+    available_models = _available_debug_models(artifacts)
+    if not available_models:
+        st.info("No model-specific debug payloads were saved for this run.")
+        return
 
-    with st.expander("Resolved Config", expanded=False):
-        render_structured_value(
-            artifacts.get("config") or {},
-            label="config",
-            editable=False,
-            key_prefix="results.technical.config",
-        )
+    _render_section_heading("Model")
+    by_name = {str(item.get("model_name")): item for item in model_results}
+    selected_model = st.selectbox("Model", options=available_models, key="results.technical.model")
+    report_text = _build_model_debug_report(
+        selected_model,
+        artifacts,
+        benchmark_name=str(selected_row.get("name") or "benchmark"),
+    )
+    st.download_button(
+        "Download model debug report",
+        data=report_text,
+        file_name=f"{str(selected_row.get('name') or 'benchmark').replace(' ', '_')}_{selected_model}_technical_debug.txt",
+        mime="text/plain",
+        key=f"results.technical.download.{selected_model}",
+        use_container_width=True,
+    )
+
+    model_result = dict(by_name.get(selected_model) or {})
+    config = dict(artifacts.get("config") or {})
+    model_config = _model_config_entry(config, selected_model) or {}
+    generated = dict(artifacts.get("generated_scenarios") or {}).get(selected_model)
+
+    _render_section_heading("Model Hyperparameters")
+    render_structured_value(
+        {
+            "name": selected_model,
+            "reference": model_config.get("reference") or model_result.get("reference") or {},
+            "params": model_result.get("params") or model_config.get("params") or {},
+            "pipeline": model_result.get("pipeline") or model_config.get("pipeline") or {},
+            "execution": model_result.get("execution") or {},
+        },
+        label="model_hyperparameters",
+        editable=False,
+        key_prefix=f"results.technical.hyperparameters.{selected_model}",
+    )
+
+    _render_section_heading("Generated Scenarios")
+    _render_array_artifact(
+        "Generated scenarios",
+        generated,
+        key_prefix=f"results.technical.generated.{selected_model}",
+    )
+
+    _render_section_heading("Model Logs")
+    st.code(_extract_model_log_text(artifacts, selected_model), language="text")
 
 
 def render() -> None:
@@ -541,17 +632,25 @@ def render() -> None:
         or dict(summary.get("dataset") or {}).get("name")
         or "Unknown dataset"
     )
-    summary_cols = st.columns(4)
-    summary_cols[0].metric("Dataset", str(dataset_label))
-    summary_cols[1].metric(
-        "Models",
-        str(len(model_table.index) if model_table is not None else len(artifacts.get("model_results") or [])),
-    )
-    summary_cols[2].metric("Run status", str(run_record.get("status") or "unknown"))
     best_model = "n/a"
     if model_table is not None and not model_table.empty:
         best_model = str(model_table.iloc[0]["model"])
-    summary_cols[3].metric("Best model", best_model)
+    _render_section_heading("Benchmark")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "benchmark": str(selected_row.get("name") or ""),
+                    "dataset": str(dataset_label),
+                    "models": len(model_table.index) if model_table is not None else len(artifacts.get("model_results") or []),
+                    "run_status": str(run_record.get("status") or "unknown"),
+                    "best_model": best_model,
+                }
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
     if selected_row.get("results_updated_at"):
         st.caption(f"Results updated: {selected_row['results_updated_at']}")
     if dataset_error:
@@ -590,10 +689,10 @@ def render() -> None:
         failed_names = ", ".join(str(item.get("model_name") or "") for item in failed_models)
         st.warning(
             f"This run is partial. Failed models: {failed_names}. "
-            "See the Models or Technical debug tab for the recorded error details."
+            "See the Metrics or Model debug tab for the recorded error details."
         )
 
-    tabs = st.tabs(["Models", "Scenarios", "Diagnostics", "Technical debug", "Compare"])
+    tabs = st.tabs(["Metrics", "Scenarios", "Diagnostics", "Model debug"])
 
     with tabs[0]:
         if model_table is None or model_table.empty:
@@ -623,36 +722,35 @@ def render() -> None:
                 key="results.scenarios.window",
             )
             asset_index = asset_names.index(asset_name)
+            show_sample_paths = st.checkbox("Show sample paths", value=False, key="results.scenarios.show_paths")
+            max_paths = 0
+            if show_sample_paths:
+                scenario_count = int(generated[model_name][eval_window].shape[0])
+                max_paths = int(
+                    st.slider(
+                        "Sample paths",
+                        min_value=1,
+                        max_value=max(1, min(scenario_count, 20)),
+                        value=min(10, scenario_count),
+                        key="results.scenarios.path_count",
+                    )
+                )
             band_df = _scenario_band_dataframe(
                 generated[model_name][eval_window],
                 dataset.realized_futures[eval_window],
                 asset_index,
             )
-            st.line_chart(band_df, use_container_width=True)
+            sample_paths_df = None
+            if show_sample_paths and max_paths > 0:
+                sample_paths_df = _scenario_sample_paths_dataframe(
+                    generated[model_name][eval_window],
+                    asset_index,
+                    max_paths=max_paths,
+                )
+            _render_scenario_band_chart(band_df, sample_paths=sample_paths_df)
 
     with tabs[2]:
         _render_diagnostics_tab(artifacts)
 
     with tabs[3]:
-        _render_technical_debug_tab(artifacts, selected_row, selected_run)
-
-    with tabs[4]:
-        compare_rows = [row for row in benchmark_rows if row.get("results_run_dir")]
-        compare_options = {str(row["name"]): Path(str(row["results_run_dir"])) for row in compare_rows}
-        if compare_options:
-            compare_default = get_compare_run_dir()
-            compare_names = list(compare_options)
-            default_index = 0
-            if compare_default is not None and compare_default.name in compare_options:
-                default_index = compare_names.index(compare_default.name)
-            compare_name = st.selectbox("Compare against", options=compare_names, index=default_index, key="results.compare.name")
-            compare_dir = compare_options[compare_name]
-            set_compare_run_dir(compare_dir)
-            compare_artifacts = load_run_artifacts(compare_dir)
-            left = artifacts.get("metrics")
-            right = compare_artifacts.get("metrics")
-            if left is not None and right is not None:
-                left_indexed = left.set_index("model") if "model" in left.columns else left
-                right_indexed = right.set_index("model") if "model" in right.columns else right
-                merged = left_indexed.add_suffix("_current").join(right_indexed.add_suffix("_compare"), how="outer")
-                st.dataframe(merged, use_container_width=True)
+        _render_model_debug_tab(artifacts, selected_row)

@@ -10,8 +10,11 @@ import streamlit as st
 from ts_benchmark.metrics import available_metric_names, normalize_metric_config
 from ts_benchmark.serialization import to_jsonable
 
-from .renderers import render_key_value, render_structured_value
+from .renderers import render_float_input, render_key_value, render_structured_value
 from .services.model_catalog import describe_catalog_model_entry
+
+PROTOCOL_MODE_KEY = "benchmarks.protocol.generation_mode"
+PROTOCOL_CONTEXT_LENGTH_KEY = "benchmarks.protocol.context_length"
 
 
 def _normalize_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -43,14 +46,26 @@ def render_config_general(config: dict[str, Any]) -> None:
 
 def render_protocol_form(config: dict[str, Any]) -> None:
     protocol = config.setdefault("benchmark", {}).setdefault("protocol", {})
+    initial_mode = str(protocol.get("generation_mode") or "forecast")
+    initial_context_length = int(protocol.get("context_length", 12 if initial_mode == "forecast" else 0))
+    st.session_state.setdefault(PROTOCOL_MODE_KEY, initial_mode)
+    st.session_state.setdefault(PROTOCOL_CONTEXT_LENGTH_KEY, initial_context_length)
+
     cols = st.columns(3)
     with cols[0]:
-        current_mode = str(protocol.get("generation_mode") or "forecast")
+        previous_mode = str(st.session_state.get(PROTOCOL_MODE_KEY, initial_mode))
         protocol["generation_mode"] = st.selectbox(
             "Generation mode",
             options=["forecast", "unconditional"],
-            index=0 if current_mode == "forecast" else 1,
+            index=0 if previous_mode == "forecast" else 1,
+            key=PROTOCOL_MODE_KEY,
         )
+        if protocol["generation_mode"] != previous_mode:
+            if protocol["generation_mode"] == "unconditional":
+                st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = 0
+            elif int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, 0)) < 1:
+                fallback_context_length = initial_context_length if initial_context_length >= 1 else 12
+                st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = fallback_context_length
     with cols[1]:
         protocol["train_size"] = int(st.number_input("Train size", min_value=1, value=int(protocol.get("train_size", 120)), step=1))
     with cols[2]:
@@ -59,13 +74,21 @@ def render_protocol_form(config: dict[str, Any]) -> None:
     with cols[0]:
         default_context_length = 12 if protocol["generation_mode"] == "forecast" else 0
         min_context_length = 1 if protocol["generation_mode"] == "forecast" else 0
+        normalized_context_length = int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, default_context_length))
+        if protocol["generation_mode"] == "forecast" and normalized_context_length < 1:
+            normalized_context_length = initial_context_length if initial_context_length >= 1 else default_context_length
+            st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = normalized_context_length
+        elif protocol["generation_mode"] == "unconditional" and normalized_context_length != 0:
+            normalized_context_length = 0
+            st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = 0
         protocol["context_length"] = int(
             st.number_input(
                 "Context length",
                 min_value=min_context_length,
-                value=int(protocol.get("context_length", default_context_length)),
+                value=normalized_context_length,
                 step=1,
                 disabled=protocol["generation_mode"] == "unconditional",
+                key=PROTOCOL_CONTEXT_LENGTH_KEY,
             )
         )
         if protocol["generation_mode"] == "unconditional":
@@ -235,7 +258,7 @@ def render_diagnostics_form(config: dict[str, Any]) -> None:
             value=bool(diagnostics.get("save_per_window_metrics", False)),
         )
     smoke = diagnostics.setdefault("functional_smoke", {})
-    smoke["enabled"] = st.checkbox("Enable functional smoke checks", value=bool(smoke.get("enabled", False)))
+    smoke["enabled"] = st.checkbox("Enable sanity checks", value=bool(smoke.get("enabled", False)))
     smoke["finite_required"] = st.checkbox("Require finite samples", value=bool(smoke.get("finite_required", True)))
     cols = st.columns(3)
     with cols[0]:
@@ -374,7 +397,7 @@ def _render_model_parameter_field(spec: dict[str, Any], value: Any, *, key_prefi
                 st.warning(f"{label} must be a number.")
                 return value
         baseline = 0.0 if current is None else float(current)
-        return float(st.number_input(label, value=baseline, key=key_prefix))
+        return render_float_input(label, baseline, key=key_prefix)
 
     if value_type == "string":
         raw = st.text_input(label, value="" if current is None else str(current), key=key_prefix)
@@ -406,7 +429,7 @@ def _render_model_parameter_field(spec: dict[str, Any], value: Any, *, key_prefi
     if isinstance(current, int) and not isinstance(current, bool):
         return int(st.number_input(label, value=current, step=1, key=key_prefix))
     if isinstance(current, float):
-        return float(st.number_input(label, value=current, key=key_prefix))
+        return render_float_input(label, current, key=key_prefix)
     raw = st.text_input(label, value="" if current is None else str(current), key=key_prefix)
     return None if raw == "" and not required and default is None else raw
 
@@ -469,12 +492,15 @@ def render_model_params_editor(
     key_prefix: str,
     allow_add_fields: bool = True,
     show_execution_controls: bool = True,
+    show_description: bool = True,
+    show_pipeline_steps: bool = True,
 ) -> None:
-    model["description"] = st.text_area(
-        "Description",
-        value=model.get("description") or "",
-        key=f"{key_prefix}.description",
-    )
+    if show_description:
+        model["description"] = st.text_area(
+            "Description",
+            value=model.get("description") or "",
+            key=f"{key_prefix}.description",
+        )
     if not _render_model_params_with_schema(model, key_prefix=key_prefix, allow_add_fields=allow_add_fields):
         model["params"] = render_key_value(
             dict(model.get("params") or {}),
@@ -496,32 +522,33 @@ def render_model_params_editor(
         key=f"{key_prefix}.pipeline.name",
     )
     steps = list(pipeline.get("steps") or [])
-    st.caption("Pipeline steps")
-    step_frame = pd.DataFrame([{"type": step.get("type", "")} for step in steps])
-    edited_steps = st.data_editor(
-        step_frame,
-        num_rows="dynamic",
-        use_container_width=True,
-        key=f"{key_prefix}.pipeline.steps",
-    )
-    new_steps: list[dict[str, Any]] = []
-    for idx, row in edited_steps.iterrows():
-        base = steps[idx] if idx < len(steps) else {"params": {}}
-        new_steps.append({"type": row.get("type") or f"step_{idx+1}", "params": dict(base.get("params") or {})})
-    pipeline["steps"] = new_steps
-    if new_steps:
-        step_index = st.selectbox(
-            "Edit step params",
-            options=list(range(len(new_steps))),
-            format_func=lambda idx: f"{idx + 1}. {new_steps[idx]['type']}",
-            key=f"{key_prefix}.pipeline.step_select",
+    if show_pipeline_steps:
+        st.caption("Pipeline steps")
+        step_frame = pd.DataFrame([{"type": step.get("type", "")} for step in steps])
+        edited_steps = st.data_editor(
+            step_frame,
+            num_rows="dynamic",
+            use_container_width=True,
+            key=f"{key_prefix}.pipeline.steps",
         )
-        new_steps[step_index]["params"] = render_key_value(
-            dict(new_steps[step_index].get("params") or {}),
-            editable=True,
-            key_prefix=f"{key_prefix}.pipeline.step_params.{step_index}",
-            allow_add_fields=allow_add_fields,
-        )
+        new_steps: list[dict[str, Any]] = []
+        for idx, row in edited_steps.iterrows():
+            base = steps[idx] if idx < len(steps) else {"params": {}}
+            new_steps.append({"type": row.get("type") or f"step_{idx+1}", "params": dict(base.get("params") or {})})
+        pipeline["steps"] = new_steps
+        if new_steps:
+            step_index = st.selectbox(
+                "Edit step params",
+                options=list(range(len(new_steps))),
+                format_func=lambda idx: f"{idx + 1}. {new_steps[idx]['type']}",
+                key=f"{key_prefix}.pipeline.step_select",
+            )
+            new_steps[step_index]["params"] = render_key_value(
+                dict(new_steps[step_index].get("params") or {}),
+                editable=True,
+                key_prefix=f"{key_prefix}.pipeline.step_params.{step_index}",
+                allow_add_fields=allow_add_fields,
+            )
     model["pipeline"] = pipeline
     if not show_execution_controls:
         model.pop("execution", None)

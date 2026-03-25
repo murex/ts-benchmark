@@ -561,8 +561,7 @@ def test_results_overview_frame_includes_failed_models_without_metrics() -> None
     assert frame is not None
     assert list(frame["model"]) == ["good_model", "failed_model"]
     failed_row = frame[frame["model"] == "failed_model"].iloc[0]
-    assert failed_row["status"] == "Failed"
-    assert failed_row["error"] == "ValueError: training exploded"
+    assert list(frame.columns) == ["model", "crps", "average_rank"]
     assert pd.isna(failed_row["crps"])
 
 

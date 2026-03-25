@@ -514,6 +514,52 @@ class TestConfigValidation:
         with pytest.raises(ValueError, match="zero for unconditional"):
             load_benchmark_config(cfg)
 
+    def test_functional_smoke_defaults_are_applied_when_enabled(self) -> None:
+        cfg = _minimal_config(
+            diagnostics={
+                "functional_smoke": {
+                    "enabled": True,
+                }
+            }
+        )
+        config = load_benchmark_config(cfg)
+        smoke = config.diagnostics.functional_smoke
+
+        assert smoke.enabled is True
+        assert smoke.finite_required is True
+        assert smoke.mean_abs_error_max == pytest.approx(0.005)
+        assert smoke.std_ratio_min == pytest.approx(0.5)
+        assert smoke.std_ratio_max == pytest.approx(1.5)
+        assert smoke.crps_max == pytest.approx(0.05)
+        assert smoke.energy_score_max == pytest.approx(0.1)
+        assert smoke.cross_correlation_error_max == pytest.approx(1.0)
+
+    def test_functional_smoke_all_null_thresholds_fall_back_to_defaults(self) -> None:
+        cfg = _minimal_config(
+            diagnostics={
+                "functional_smoke": {
+                    "enabled": True,
+                    "finite_required": True,
+                    "mean_abs_error_max": None,
+                    "std_ratio_min": None,
+                    "std_ratio_max": None,
+                    "crps_max": None,
+                    "energy_score_max": None,
+                    "cross_correlation_error_max": None,
+                }
+            }
+        )
+        config = load_benchmark_config(cfg)
+        smoke = config.diagnostics.functional_smoke
+
+        assert smoke.enabled is True
+        assert smoke.mean_abs_error_max == pytest.approx(0.005)
+        assert smoke.std_ratio_min == pytest.approx(0.5)
+        assert smoke.std_ratio_max == pytest.approx(1.5)
+        assert smoke.crps_max == pytest.approx(0.05)
+        assert smoke.energy_score_max == pytest.approx(0.1)
+        assert smoke.cross_correlation_error_max == pytest.approx(1.0)
+
     def test_duplicate_model_names_rejected(self) -> None:
         cfg = _minimal_config()
         cfg["benchmark"]["models"].append(cfg["benchmark"]["models"][0].copy())
