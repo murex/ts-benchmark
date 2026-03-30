@@ -100,7 +100,7 @@ class _TimeGradGenerator:
         )
 
     def sample(self, request: GenerationRequest) -> GenerationResult:
-        horizon, _ = require_forecast_task(request.task)
+        horizon = require_forecast_task(request.task)
         if horizon != self.prediction_length:
             raise ValueError(f"Expected horizon={self.prediction_length}, got {horizon}.")
         if request.constraints:
@@ -231,13 +231,12 @@ class PytorchTsTimeGradAdapter:
     ) -> tuple[_TimeGradGenerator, FitReport]:
         del valid
         started_at = time.perf_counter()
-        horizon, context_length = require_forecast_task(task)
+        horizon = require_forecast_task(task)
         target_dim = int(getattr(schema, "target_dim"))
         freq = getattr(schema, "freq", None) or "B"
-        train_series_collection = coerce_forecast_training_series_collection(
+        train_series_collection, context_length = coerce_forecast_training_series_collection(
             train,
             target_dim=target_dim,
-            context_length=context_length,
             horizon=horizon,
         )
         _ensure_gluonts_distribution_output_compat()

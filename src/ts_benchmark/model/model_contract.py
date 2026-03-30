@@ -117,8 +117,6 @@ class TaskSpec:
 
     For `FORECAST`, `horizon` is the requested number of future steps to
     generate conditional on the history embedded in the series.
-    `context_length` is the intended conditioning history length when the
-    caller needs to communicate that explicitly to the model at fit time.
 
     For `UNCONDITIONAL`, `horizon` may be used as the desired generated
     sequence length if the caller chooses that convention.
@@ -126,7 +124,6 @@ class TaskSpec:
 
     mode: GenerationMode
     horizon: Optional[int] = None
-    context_length: Optional[int] = None
 
 
 @dataclass(frozen=True)

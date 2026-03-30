@@ -17,7 +17,7 @@ def mode_value(value: Any) -> str:
     return str(value)
 
 
-def require_forecast_task(task: object) -> tuple[int, int]:
+def require_forecast_task(task: object) -> int:
     mode = mode_value(getattr(task, "mode", None))
     if mode != GenerationMode.FORECAST.value:
         raise ValueError(f"unsupported mode {mode!r}; this adapter supports forecast only.")
@@ -28,12 +28,7 @@ def require_forecast_task(task: object) -> tuple[int, int]:
     horizon = int(raw_horizon)
     if horizon < 1:
         raise ValueError("task.horizon must be positive.")
-
-    raw_context_length = getattr(task, "context_length", None)
-    context_length = horizon if raw_context_length is None else int(raw_context_length)
-    if context_length < 1:
-        raise ValueError("task.context_length must be positive when provided.")
-    return horizon, context_length
+    return horizon
 
 
 def runtime_device(runtime: object | None) -> str | None:
@@ -66,13 +61,13 @@ def coerce_forecast_training_series_collection(
     train_like: object,
     *,
     target_dim: int,
-    context_length: int,
     horizon: int,
-) -> list[np.ndarray]:
+) -> tuple[list[np.ndarray], int]:
     examples = getattr(train_like, "examples", None)
     if examples is None:
         raise ValueError("forecast adapters expect train.examples in TrainData.")
     series_collection: list[np.ndarray] = []
+    resolved_context_length: int | None = None
     for index, example in enumerate(examples):
         context_like = getattr(example, "context", None)
         target_like = getattr(example, "target", None)
@@ -92,10 +87,12 @@ def coerce_forecast_training_series_collection(
                 f"train.examples[{index}].target target_dim={target_values.shape[-1]} "
                 f"does not match schema.target_dim={target_dim}."
             )
-        if context_values.shape[0] != context_length:
+        if resolved_context_length is None:
+            resolved_context_length = int(context_values.shape[0])
+        elif context_values.shape[0] != resolved_context_length:
             raise ValueError(
                 f"train.examples[{index}].context has length {context_values.shape[0]} "
-                f"but expected context_length={context_length}."
+                f"but expected context_length={resolved_context_length}."
             )
         if target_values.shape[0] != horizon:
             raise ValueError(
@@ -105,7 +102,8 @@ def coerce_forecast_training_series_collection(
         series_collection.append(np.concatenate([context_values, target_values], axis=0))
     if not series_collection:
         raise ValueError("forecast training data must contain at least one example.")
-    return series_collection
+    assert resolved_context_length is not None
+    return series_collection, resolved_context_length
 
 
 def make_list_dataset_from_series_collection(

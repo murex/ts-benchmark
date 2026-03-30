@@ -139,11 +139,6 @@ class DuckTypedGeneratorScenarioModel(ScenarioModel):
         task = ExternalTask(
             mode=ExternalMode(str(train_data.protocol.generation_mode)),
             horizon=int(train_data.protocol.horizon),
-            context_length=(
-                int(train_data.protocol.context_length)
-                if str(train_data.protocol.generation_mode) == "forecast"
-                else None
-            ),
         )
         engine, fit_report = self.estimator.fit(
             _training_payload(train_data),
@@ -165,7 +160,6 @@ class DuckTypedGeneratorScenarioModel(ScenarioModel):
         task = ExternalTask(
             mode=ExternalMode(str(request.mode)),
             horizon=int(request.horizon),
-            context_length=int(request.context.shape[0]) if str(request.mode) == "forecast" else None,
         )
         external_request = ExternalRequest(
             series=series,

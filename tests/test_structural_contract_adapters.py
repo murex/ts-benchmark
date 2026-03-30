@@ -37,7 +37,7 @@ class _DummyGenerator:
             samples=np.zeros((request.num_samples, request.task.horizon, 2), dtype=float),
             diagnostics={
                 "mode": getattr(request.task, "mode", None),
-                "context_length": getattr(request.task, "context_length", None),
+                "has_context_length": hasattr(request.task, "context_length"),
             },
         )
 
@@ -54,7 +54,7 @@ class _DummyEstimator:
         return _DummyGenerator(), FitReport(
             diagnostics={
                 "mode": getattr(task, "mode", None),
-                "context_length": getattr(task, "context_length", None),
+                "has_context_length": hasattr(task, "context_length"),
                 "train_kind": train_kind,
                 "n_train_examples": len(examples),
                 "n_context_examples": n_context_examples,
@@ -68,7 +68,7 @@ def test_structural_estimators_expose_schema_and_task_fit_parameters() -> None:
     assert "task" in fit_signature.parameters
 
 
-def test_duck_typed_bridge_passes_context_length_to_structural_estimators() -> None:
+def test_duck_typed_bridge_omits_public_context_length_from_structural_estimators() -> None:
     protocol = Protocol(
         train_size=24,
         test_size=6,
@@ -95,7 +95,7 @@ def test_duck_typed_bridge_passes_context_length_to_structural_estimators() -> N
 
     info = model.model_info()
     assert info["fit_report"]["diagnostics"]["mode"] == "forecast"
-    assert info["fit_report"]["diagnostics"]["context_length"] == protocol.context_length
+    assert info["fit_report"]["diagnostics"]["has_context_length"] is False
     assert info["fit_report"]["diagnostics"]["train_kind"] == "forecast_examples"
     assert info["fit_report"]["diagnostics"]["n_train_examples"] == 18
     assert info["fit_report"]["diagnostics"]["n_context_examples"] == 18
@@ -109,10 +109,10 @@ def test_duck_typed_bridge_passes_context_length_to_structural_estimators() -> N
     )
     result = model.sample(request)
     assert result.metadata["diagnostics"]["mode"] == "forecast"
-    assert result.metadata["diagnostics"]["context_length"] == protocol.context_length
+    assert result.metadata["diagnostics"]["has_context_length"] is False
 
 
-def test_duck_typed_bridge_passes_unconditional_mode_without_context_length() -> None:
+def test_duck_typed_bridge_keeps_unconditional_public_task_minimal() -> None:
     protocol = Protocol(
         train_size=24,
         test_size=6,
@@ -142,7 +142,7 @@ def test_duck_typed_bridge_passes_unconditional_mode_without_context_length() ->
 
     info = model.model_info()
     assert info["fit_report"]["diagnostics"]["mode"] == "unconditional"
-    assert info["fit_report"]["diagnostics"]["context_length"] is None
+    assert info["fit_report"]["diagnostics"]["has_context_length"] is False
     assert info["fit_report"]["diagnostics"]["train_kind"] == "unconditional_examples"
     assert info["fit_report"]["diagnostics"]["n_train_examples"] == 19
     assert info["fit_report"]["diagnostics"]["n_context_examples"] == 0
@@ -157,4 +157,4 @@ def test_duck_typed_bridge_passes_unconditional_mode_without_context_length() ->
     )
     result = model.sample(request)
     assert result.metadata["diagnostics"]["mode"] == "unconditional"
-    assert result.metadata["diagnostics"]["context_length"] is None
+    assert result.metadata["diagnostics"]["has_context_length"] is False

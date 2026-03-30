@@ -896,11 +896,9 @@ Important task semantics:
 
 - `task.mode = "forecast"`:
   - `task.horizon` is the forecast horizon
-  - `task.context_length` is the intended conditioning history length
   - `fit(train=...)` receives `TrainData(examples=...)` with `context` and `target`
 - `task.mode = "unconditional"`:
   - `task.horizon` is the desired generated sequence length
-  - `task.context_length` is typically `None`
   - `fit(train=...)` receives `TrainData(examples=...)` with `context=None`
 
 Minimal estimator/generator shape:
@@ -1117,7 +1115,6 @@ Use:
 ```python
 mode = task.mode
 horizon = task.horizon
-context_length = task.context_length
 num_samples = request.num_samples
 history = request.series.values
 ```
@@ -1127,7 +1124,6 @@ Do **not** make benchmark-owned task settings a second hidden model config.
 In particular, do not duplicate:
 
 - generation mode
-- context length
 - horizon
 - requested sample count
 
