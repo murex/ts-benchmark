@@ -20,10 +20,12 @@ from ..services.model_catalog import (
     save_catalog_model,
     store_uploaded_entrypoint_file,
 )
+from ..state import set_page
 
 MODEL_CATALOG_SELECTED_KEY = "model_catalog.selected"
 MODEL_CATALOG_PENDING_SELECTED_KEY = "model_catalog.pending_selected"
 MODEL_CATALOG_FLASH_KEY = "model_catalog.flash"
+MODEL_CATALOG_RETURN_SOURCE_KEY = "model_catalog.return_source"
 MODEL_CATALOG_PLUGIN_NAME_KEY = "model_catalog.add.plugin_name"
 MODEL_CATALOG_PLUGIN_NAME_DEFAULT_KEY = "model_catalog.add.plugin_name_default"
 MODEL_CATALOG_ENTRYPOINT_NAME_KEY = "model_catalog.add.entrypoint_name"
@@ -32,6 +34,8 @@ MODEL_CATALOG_ENTRYPOINT_UPLOAD_MARKER_KEY = "model_catalog.add.entrypoint_uploa
 MODEL_CATALOG_ENTRYPOINT_UPLOADED_PATH_KEY = "model_catalog.add.entrypoint_uploaded_path"
 MODEL_CATALOG_ENTRYPOINT_REPO_ROOT_KEY = "model_catalog.add.entrypoint_repo_root"
 MODEL_CATALOG_ENTRYPOINT_FILE_KEY = "model_catalog.add.entrypoint_file_select"
+BENCHMARKS_PENDING_SECTION_KEY = "benchmarks.pending_section"
+BENCHMARKS_PENDING_EDITOR_VIEW_KEY = "benchmarks.pending_editor_view"
 
 
 def _set_flash(level: str, message: str) -> None:
@@ -420,6 +424,12 @@ def render() -> None:
     st.header("Model Catalog")
     st.caption("Browse the current model catalog, add discoverable plugins or manual entrypoints, and inspect each model's parameters.")
     _render_flash()
+    if st.session_state.get(MODEL_CATALOG_RETURN_SOURCE_KEY) == "benchmark":
+        if st.button("Back to benchmark", use_container_width=False):
+            st.session_state[BENCHMARKS_PENDING_SECTION_KEY] = "Benchmark"
+            st.session_state[BENCHMARKS_PENDING_EDITOR_VIEW_KEY] = "Models"
+            set_page("Benchmarks")
+            st.rerun()
 
     catalog_frame = _catalog_frame()
     if catalog_frame.empty:

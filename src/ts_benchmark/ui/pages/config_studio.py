@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ts_benchmark.metrics import available_metric_names
+from ts_benchmark.metrics import available_metric_names, resolve_metric_configs
 
 from ..schema_forms import (
     render_model_params_editor,
@@ -47,6 +47,10 @@ BENCHMARKS_UPLOAD_KEY = "benchmarks.catalog.upload"
 BENCHMARKS_DATASET_SELECT_KEY = "benchmarks.definition.dataset_select"
 BENCHMARKS_MODEL_SELECT_KEY = "benchmarks.definition.models"
 BENCHMARKS_METRIC_SELECT_KEY = "benchmarks.definition.metrics"
+DATA_STUDIO_PENDING_SECTION_KEY = "data_studio.pending_section"
+DATA_STUDIO_PENDING_DATASET_VIEW_KEY = "data_studio.pending_dataset_view"
+DATA_STUDIO_RETURN_SOURCE_KEY = "data_studio.return_source"
+MODEL_CATALOG_RETURN_SOURCE_KEY = "model_catalog.return_source"
 
 
 def _set_flash(level: str, message: str) -> None:
@@ -302,11 +306,6 @@ def _render_definition(current: dict[str, Any]) -> None:
 def _render_dataset(current: dict[str, Any]) -> None:
     benchmark = current.setdefault("benchmark", {})
 
-    quick = st.columns([1, 4])
-    if quick[0].button("Manage datasets", use_container_width=True):
-        set_page("Data Studio")
-        st.rerun()
-
     st.subheader("Dataset")
     saved_datasets = list_saved_datasets()
     dataset_options = [str(row["name"]) for row in saved_datasets]
@@ -345,6 +344,13 @@ def _render_dataset(current: dict[str, Any]) -> None:
         st.dataframe(pd.DataFrame(_dataset_summary_rows(current_dataset)), use_container_width=True, hide_index=True)
         if current_dataset.get("description"):
             st.caption(str(current_dataset["description"]))
+        if st.button("Open dataset", use_container_width=True):
+            set_current_config(current)
+            st.session_state[DATA_STUDIO_PENDING_SECTION_KEY] = "Dataset"
+            st.session_state[DATA_STUDIO_PENDING_DATASET_VIEW_KEY] = "Definition"
+            st.session_state[DATA_STUDIO_RETURN_SOURCE_KEY] = "benchmark"
+            set_page("Data Studio")
+            st.rerun()
 
 
 def _render_models(current: dict[str, Any]) -> None:
@@ -352,6 +358,8 @@ def _render_models(current: dict[str, Any]) -> None:
 
     quick = st.columns([1, 4])
     if quick[0].button("Manage models", use_container_width=True):
+        set_current_config(current)
+        st.session_state[MODEL_CATALOG_RETURN_SOURCE_KEY] = "benchmark"
         set_page("Model Catalog")
         st.rerun()
 
@@ -398,8 +406,15 @@ def _render_metrics(current: dict[str, Any]) -> None:
     )
     benchmark["metrics"] = [{"name": name} for name in selected_metric_names]
     if selected_metric_names:
+        metric_rows = [
+            {
+                "metric": metric.name,
+                "description": metric.description or "",
+            }
+            for metric in resolve_metric_configs(benchmark["metrics"])
+        ]
         st.dataframe(
-            pd.DataFrame({"metric": selected_metric_names}),
+            pd.DataFrame(metric_rows),
             use_container_width=True,
             hide_index=True,
         )

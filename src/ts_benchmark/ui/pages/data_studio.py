@@ -23,7 +23,7 @@ from ..services.datasets import (
     store_uploaded_dataset_file,
     switch_dataset_source,
 )
-from ..state import get_current_config, set_current_config
+from ..state import get_current_config, set_current_config, set_page
 
 SOURCE_LABELS = {
     "synthetic": "Synthetic generator",
@@ -39,6 +39,9 @@ DATA_STUDIO_SECTION_KEY = "data_studio.section"
 DATA_STUDIO_DATASET_VIEW_KEY = "data_studio.dataset_view"
 DATA_STUDIO_PENDING_SECTION_KEY = "data_studio.pending_section"
 DATA_STUDIO_PENDING_DATASET_VIEW_KEY = "data_studio.pending_dataset_view"
+DATA_STUDIO_RETURN_SOURCE_KEY = "data_studio.return_source"
+BENCHMARKS_PENDING_SECTION_KEY = "benchmarks.pending_section"
+BENCHMARKS_PENDING_EDITOR_VIEW_KEY = "benchmarks.pending_editor_view"
 
 TABULAR_VALUE_MODE_LABELS = {
     "price": "Price",
@@ -237,11 +240,12 @@ def _reset_dataset_editor_widget_state() -> None:
             del st.session_state[key]
 
 
-def _open_dataset_definition(dataset: dict[str, Any]) -> None:
+def _open_dataset_definition(dataset: dict[str, Any], *, source: str | None = None) -> None:
     _reset_dataset_editor_widget_state()
     _sync_dataset_to_config(dataset)
     st.session_state[DATA_STUDIO_PENDING_SECTION_KEY] = "Dataset"
     st.session_state[DATA_STUDIO_PENDING_DATASET_VIEW_KEY] = "Definition"
+    st.session_state[DATA_STUDIO_RETURN_SOURCE_KEY] = None if source is None else str(source)
 
 
 def _new_dataset() -> None:
@@ -778,7 +782,7 @@ def _render_catalog_tab() -> None:
             use_container_width=True,
             help="Open this dataset in Dataset > Definition.",
         ):
-            _open_dataset_definition(selected_dataset)
+            _open_dataset_definition(selected_dataset, source="catalog")
             st.rerun()
 
         if row_cols[5].button(
@@ -1173,6 +1177,12 @@ def render() -> None:
         _render_catalog_tab()
 
     if section == "Dataset":
+        if st.session_state.get(DATA_STUDIO_RETURN_SOURCE_KEY) == "benchmark":
+            if st.button("Back to benchmark", use_container_width=False):
+                st.session_state[BENCHMARKS_PENDING_SECTION_KEY] = "Benchmark"
+                st.session_state[BENCHMARKS_PENDING_EDITOR_VIEW_KEY] = "Dataset"
+                set_page("Benchmarks")
+                st.rerun()
         dataset_view = st.segmented_control(
             "Dataset view",
             options=["Definition", "Preview", "Statistics"],
