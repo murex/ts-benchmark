@@ -41,6 +41,9 @@ BENCHMARK_OWNED_PROTOCOL_FIELDS = {
     "generation_mode",
     "eval_stride",
     "train_stride",
+    "unconditional_train_data_mode",
+    "unconditional_train_window_length",
+    "unconditional_n_train_paths",
     "n_model_scenarios",
     "n_reference_scenarios",
 }
@@ -116,6 +119,18 @@ def validate_benchmark_config(config_dict: dict[str, Any]) -> None:
                 )
     else:
         raise ValueError(f"Unsupported dataset.provider.kind '{source}'.")
+
+    protocol_block = _as_mapping(benchmark_block.get("protocol"), field_name="benchmark.protocol")
+    generation_mode = str(protocol_block.get("generation_mode") or "forecast")
+    unconditional_train_data_mode = protocol_block.get("unconditional_train_data_mode")
+    if (
+        generation_mode == "unconditional"
+        and unconditional_train_data_mode == "path_dataset"
+        and source != "synthetic"
+    ):
+        raise ValueError(
+            "unconditional_train_data_mode='path_dataset' is currently supported only for synthetic datasets."
+        )
 
     metrics_block = benchmark_block.get("metrics")
     if metrics_block:

@@ -322,6 +322,8 @@ class RegimeSwitchingFactorSVGenerator:
         context_length = int(protocol.context_length)
         horizon = int(protocol.horizon)
         eval_stride = int(protocol.eval_stride)
+        unconditional_train_data_mode = protocol.unconditional_train_data_mode
+        unconditional_n_train_paths = protocol.unconditional_n_train_paths
         if generation_mode == "forecast" and train_size <= context_length:
             raise ValueError("train_size must be larger than context_length.")
         if test_size < horizon:
@@ -330,8 +332,34 @@ class RegimeSwitchingFactorSVGenerator:
             raise ValueError("eval_stride must be positive.")
 
         total_steps = train_size + test_size
-        simulation = self.simulate(total_steps, seed=seed)
-        returns = simulation.returns
+        train_paths: list[np.ndarray] | None = None
+        if generation_mode == "unconditional" and unconditional_train_data_mode == "path_dataset":
+            if unconditional_n_train_paths is None:
+                raise ValueError(
+                    "unconditional_n_train_paths is required for synthetic path-dataset training."
+                )
+            seed_rng = self._rng(seed)
+            child_seeds = seed_rng.integers(
+                0,
+                np.iinfo(np.int64).max,
+                size=int(unconditional_n_train_paths) + 1,
+                dtype=np.int64,
+            )
+            train_paths = [
+                self.simulate(train_size, seed=int(child_seed)).returns
+                for child_seed in child_seeds[:-1]
+            ]
+            simulation = self.simulate(total_steps, seed=int(child_seeds[-1]))
+            returns = simulation.returns
+            train_returns = np.concatenate(train_paths, axis=0)
+            test_returns = returns[train_size:]
+            full_returns = np.concatenate([train_returns, test_returns], axis=0)
+        else:
+            simulation = self.simulate(total_steps, seed=seed)
+            returns = simulation.returns
+            train_returns = returns[:train_size]
+            test_returns = returns[train_size:]
+            full_returns = returns
 
         contexts = []
         realized_futures = []
@@ -374,20 +402,25 @@ class RegimeSwitchingFactorSVGenerator:
         return DatasetInstance(
             name="synthetic::regime_switching_factor_sv",
             source="synthetic",
-            full_returns=returns,
-            train_returns=returns[:train_size],
-            test_returns=returns[train_size:],
+            full_returns=full_returns,
+            train_returns=train_returns,
+            test_returns=test_returns,
             contexts=np.stack(contexts, axis=0),
             realized_futures=np.stack(realized_futures, axis=0),
             asset_names=simulation.asset_names,
             protocol=protocol,
             freq="B",
+            train_paths=train_paths,
             metadata={
                 **simulation.metadata,
                 "generator": "regime_switching_factor_sv",
                 "generator_class": self.__class__.__name__,
                 "reference_state_count": len(reference_states),
                 "reference_mode": generation_mode,
+                "unconditional_train_data_mode": unconditional_train_data_mode,
+                "unconditional_n_train_paths": unconditional_n_train_paths,
+                "train_path_count": None if train_paths is None else len(train_paths),
+                "train_path_length": None if train_paths is None else train_size,
                 "is_synthetic": True,
             },
             evaluation_timestamps=None,

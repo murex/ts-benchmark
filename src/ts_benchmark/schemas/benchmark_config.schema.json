@@ -78,6 +78,21 @@
             },
             "eval_stride": {"type": "integer", "minimum": 1, "default": 10},
             "train_stride": {"type": "integer", "minimum": 1, "default": 1},
+            "unconditional_train_data_mode": {
+              "type": ["string", "null"],
+              "enum": ["windowed_path", "path_dataset", null],
+              "default": null
+            },
+            "unconditional_train_window_length": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "default": null
+            },
+            "unconditional_n_train_paths": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "default": null
+            },
             "n_model_scenarios": {"type": "integer", "minimum": 1, "default": 64},
             "n_reference_scenarios": {"type": "integer", "minimum": 1, "default": 128}
           }

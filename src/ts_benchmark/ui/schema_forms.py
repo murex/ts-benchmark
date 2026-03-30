@@ -15,6 +15,9 @@ from .services.model_catalog import describe_catalog_model_entry
 
 PROTOCOL_MODE_KEY = "benchmarks.protocol.generation_mode"
 PROTOCOL_CONTEXT_LENGTH_KEY = "benchmarks.protocol.context_length"
+PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY = "benchmarks.protocol.unconditional_train_data_mode"
+PROTOCOL_UNCONDITIONAL_WINDOW_KEY = "benchmarks.protocol.unconditional_train_window_length"
+PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY = "benchmarks.protocol.unconditional_n_train_paths"
 
 
 def _normalize_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -48,8 +51,30 @@ def render_protocol_form(config: dict[str, Any]) -> None:
     protocol = config.setdefault("benchmark", {}).setdefault("protocol", {})
     initial_mode = str(protocol.get("generation_mode") or "forecast")
     initial_context_length = int(protocol.get("context_length", 12 if initial_mode == "forecast" else 0))
+    raw_unconditional_data_mode = protocol.get("unconditional_train_data_mode")
+    initial_unconditional_data_mode = (
+        "windowed_path"
+        if raw_unconditional_data_mode in {None, ""}
+        else str(raw_unconditional_data_mode)
+    )
+    current_train_size = int(protocol.get("train_size", 120))
+    raw_unconditional_window_length = protocol.get("unconditional_train_window_length")
+    initial_unconditional_window_length = (
+        min(current_train_size, max(int(protocol.get("horizon", 4)), 16))
+        if raw_unconditional_window_length in {None, ""}
+        else int(raw_unconditional_window_length)
+    )
+    raw_unconditional_path_count = protocol.get("unconditional_n_train_paths")
+    initial_unconditional_path_count = (
+        8
+        if raw_unconditional_path_count in {None, ""}
+        else int(raw_unconditional_path_count)
+    )
     st.session_state.setdefault(PROTOCOL_MODE_KEY, initial_mode)
     st.session_state.setdefault(PROTOCOL_CONTEXT_LENGTH_KEY, initial_context_length)
+    st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, initial_unconditional_data_mode)
+    st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_WINDOW_KEY, initial_unconditional_window_length)
+    st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, initial_unconditional_path_count)
 
     cols = st.columns(3)
     with cols[0]:
@@ -63,6 +88,15 @@ def render_protocol_form(config: dict[str, Any]) -> None:
         if protocol["generation_mode"] != previous_mode:
             if protocol["generation_mode"] == "unconditional":
                 st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = 0
+                if str(st.session_state.get(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, "")) not in {
+                    "windowed_path",
+                    "path_dataset",
+                }:
+                    st.session_state[PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY] = initial_unconditional_data_mode
+                if int(st.session_state.get(PROTOCOL_UNCONDITIONAL_WINDOW_KEY, 0)) < 1:
+                    st.session_state[PROTOCOL_UNCONDITIONAL_WINDOW_KEY] = initial_unconditional_window_length
+                if int(st.session_state.get(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, 0)) < 1:
+                    st.session_state[PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY] = initial_unconditional_path_count
             elif int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, 0)) < 1:
                 fallback_context_length = initial_context_length if initial_context_length >= 1 else 12
                 st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = fallback_context_length
@@ -72,34 +106,95 @@ def render_protocol_form(config: dict[str, Any]) -> None:
         protocol["test_size"] = int(st.number_input("Test size", min_value=1, value=int(protocol.get("test_size", 40)), step=1))
     cols = st.columns(3)
     with cols[0]:
-        default_context_length = 12 if protocol["generation_mode"] == "forecast" else 0
-        min_context_length = 1 if protocol["generation_mode"] == "forecast" else 0
-        normalized_context_length = int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, default_context_length))
-        if protocol["generation_mode"] == "forecast" and normalized_context_length < 1:
-            normalized_context_length = initial_context_length if initial_context_length >= 1 else default_context_length
-            st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = normalized_context_length
-        elif protocol["generation_mode"] == "unconditional" and normalized_context_length != 0:
-            normalized_context_length = 0
-            st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = 0
-        protocol["context_length"] = int(
-            st.number_input(
-                "Context length",
-                min_value=min_context_length,
-                value=normalized_context_length,
-                step=1,
-                disabled=protocol["generation_mode"] == "unconditional",
-                key=PROTOCOL_CONTEXT_LENGTH_KEY,
+        if protocol["generation_mode"] == "forecast":
+            default_context_length = 12
+            normalized_context_length = int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, default_context_length))
+            if normalized_context_length < 1:
+                normalized_context_length = initial_context_length if initial_context_length >= 1 else default_context_length
+                st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = normalized_context_length
+            protocol["context_length"] = int(
+                st.number_input(
+                    "Context length",
+                    min_value=1,
+                    value=normalized_context_length,
+                    step=1,
+                    key=PROTOCOL_CONTEXT_LENGTH_KEY,
+                )
             )
-        )
-        if protocol["generation_mode"] == "unconditional":
+            protocol["unconditional_train_data_mode"] = None
+            protocol["unconditional_train_window_length"] = None
+            protocol["unconditional_n_train_paths"] = None
+        else:
             protocol["context_length"] = 0
+            protocol["unconditional_train_data_mode"] = st.selectbox(
+                "Train data mode",
+                options=["windowed_path", "path_dataset"],
+                index=0
+                if str(st.session_state.get(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, initial_unconditional_data_mode))
+                == "windowed_path"
+                else 1,
+                key=PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY,
+            )
+            if protocol["unconditional_train_data_mode"] == "windowed_path":
+                train_size = int(protocol.get("train_size", current_train_size))
+                normalized_window_length = int(
+                    st.session_state.get(PROTOCOL_UNCONDITIONAL_WINDOW_KEY, initial_unconditional_window_length)
+                )
+                if normalized_window_length < 1 or normalized_window_length > train_size:
+                    normalized_window_length = min(train_size, initial_unconditional_window_length)
+                    st.session_state[PROTOCOL_UNCONDITIONAL_WINDOW_KEY] = normalized_window_length
+                protocol["unconditional_train_window_length"] = int(
+                    st.number_input(
+                        "Train window length",
+                        min_value=1,
+                        max_value=train_size,
+                        value=normalized_window_length,
+                        step=1,
+                        key=PROTOCOL_UNCONDITIONAL_WINDOW_KEY,
+                    )
+                )
+                protocol["unconditional_n_train_paths"] = None
+            else:
+                normalized_path_count = int(
+                    st.session_state.get(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, initial_unconditional_path_count)
+                )
+                if normalized_path_count < 1:
+                    normalized_path_count = initial_unconditional_path_count
+                    st.session_state[PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY] = normalized_path_count
+                protocol["unconditional_n_train_paths"] = int(
+                    st.number_input(
+                        "Training paths",
+                        min_value=1,
+                        value=normalized_path_count,
+                        step=1,
+                        key=PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY,
+                    )
+                )
+                protocol["unconditional_train_window_length"] = None
     cols = st.columns(3)
     with cols[0]:
-        protocol["horizon"] = int(st.number_input("Horizon", min_value=1, value=int(protocol.get("horizon", 4)), step=1))
+        horizon_label = "Horizon" if protocol["generation_mode"] == "forecast" else "Sample length"
+        protocol["horizon"] = int(st.number_input(horizon_label, min_value=1, value=int(protocol.get("horizon", 4)), step=1))
     with cols[1]:
         protocol["eval_stride"] = int(st.number_input("Eval stride", min_value=1, value=int(protocol.get("eval_stride", 10)), step=1))
     with cols[2]:
-        protocol["train_stride"] = int(st.number_input("Train stride", min_value=1, value=int(protocol.get("train_stride", 1)), step=1))
+        train_stride_label = "Train stride"
+        train_stride_disabled = False
+        if protocol["generation_mode"] == "unconditional":
+            if protocol.get("unconditional_train_data_mode") == "windowed_path":
+                train_stride_label = "Train window stride"
+            else:
+                train_stride_label = "Train stride (unused)"
+                train_stride_disabled = True
+        protocol["train_stride"] = int(
+            st.number_input(
+                train_stride_label,
+                min_value=1,
+                value=int(protocol.get("train_stride", 1)),
+                step=1,
+                disabled=train_stride_disabled,
+            )
+        )
     cols = st.columns(2)
     with cols[0]:
         protocol["n_model_scenarios"] = int(

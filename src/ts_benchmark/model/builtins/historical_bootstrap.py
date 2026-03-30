@@ -71,7 +71,10 @@ class HistoricalBootstrapModel(ScenarioModel):
             raise ValueError("block_size must be positive.")
         self.block_size = int(block_size)
         self.train_returns: np.ndarray | None = None
+        self.train_paths: list[np.ndarray] | None = None
         self.n_assets: int | None = None
+        self._n_train_windows: int = 0
+        self._n_train_paths: int = 0
         self._runtime_device: str | None = None
         self._resolved_device: str | None = None
         self._train_returns_torch: Any | None = None
@@ -81,21 +84,54 @@ class HistoricalBootstrapModel(ScenarioModel):
         x = np.asarray(train_data.returns, dtype=float)
         if x.ndim != 2:
             raise ValueError("train_returns must be shaped [time, n_assets].")
+
+        self._runtime_device = None if train_data.runtime is None else train_data.runtime.device
+        self.n_assets = x.shape[1]
+        self.train_paths = None
+        self._n_train_windows = 0
+        self._n_train_paths = 0
+
+        self._train_returns_torch = None
+        if train_data.forecast_windows is not None or train_data.path_collection is not None:
+            paths = train_data.benchmark_training_paths()
+            if any(len(path) < self.block_size for path in paths):
+                raise ValueError("training paths are shorter than block_size.")
+            self.train_paths = paths
+            if train_data.forecast_windows is not None:
+                self._n_train_windows = len(paths)
+            else:
+                self._n_train_paths = len(paths)
+            self.train_returns = np.concatenate(paths, axis=0)
+            self._resolved_device = "cpu"
+            return self
+
         if len(x) < self.block_size:
             raise ValueError("train_returns are shorter than block_size.")
 
-        self._runtime_device = None if train_data.runtime is None else train_data.runtime.device
         self.train_returns = x
-        self.n_assets = x.shape[1]
-
         torch, device = _resolve_torch_device(self._runtime_device)
         self._resolved_device = None if device is None else str(device)
-        self._train_returns_torch = None
         if torch is not None and device is not None and device.type != "cpu":
             self._train_returns_torch = torch.as_tensor(x, dtype=torch.float32, device=device)
         return self
 
     def _sample_single_path(self, horizon: int, rng: np.random.Generator) -> np.ndarray:
+        if self.train_paths is not None:
+            if self.block_size == 1:
+                out = np.empty((horizon, self.n_assets), dtype=float)
+                for step in range(horizon):
+                    path = self.train_paths[int(rng.integers(0, len(self.train_paths)))]
+                    out[step] = path[int(rng.integers(0, len(path)))]
+                return out
+
+            n_blocks = int(math.ceil(horizon / self.block_size))
+            blocks: list[np.ndarray] = []
+            for _ in range(n_blocks):
+                path = self.train_paths[int(rng.integers(0, len(self.train_paths)))]
+                start = int(rng.integers(0, len(path) - self.block_size + 1))
+                blocks.append(path[start : start + self.block_size])
+            return np.concatenate(blocks, axis=0)[:horizon]
+
         assert self.train_returns is not None
         if self.block_size == 1:
             idx = rng.integers(0, len(self.train_returns), size=horizon)
@@ -160,6 +196,8 @@ class HistoricalBootstrapModel(ScenarioModel):
             "name": self.name,
             "class": self.__class__.__name__,
             "block_size": self.block_size,
+            "n_train_windows": self._n_train_windows,
+            "n_train_paths": self._n_train_paths,
             "runtime_device": self._runtime_device,
             "resolved_device": self._resolved_device,
         }

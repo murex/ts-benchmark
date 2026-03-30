@@ -1,4 +1,4 @@
-"""Window extraction helpers for conditional scenario models."""
+"""Window extraction helpers for scenario-model training datasets."""
 
 from __future__ import annotations
 
@@ -52,6 +52,39 @@ def rolling_context_future_pairs(
         futures.append(x[end : end + horizon])
 
     return np.stack(contexts, axis=0), np.stack(futures, axis=0)
+
+
+def rolling_series_windows(
+    returns: np.ndarray,
+    window_length: int,
+    stride: int = 1,
+) -> np.ndarray:
+    """Extract rolling unconditional training paths.
+
+    Parameters
+    ----------
+    returns:
+        Array of shape `[time, n_assets]`.
+    window_length:
+        Number of timesteps per extracted path.
+    stride:
+        Step between consecutive extracted paths.
+    """
+    x = np.asarray(returns, dtype=float)
+    if x.ndim != 2:
+        raise ValueError("returns must be shaped [time, n_assets].")
+    if window_length <= 0:
+        raise ValueError("window_length must be positive.")
+    if stride <= 0:
+        raise ValueError("stride must be positive.")
+    if len(x) < window_length:
+        raise ValueError("returns are too short for the requested window_length.")
+
+    windows = [
+        x[start : start + window_length]
+        for start in range(0, len(x) - window_length + 1, stride)
+    ]
+    return np.stack(windows, axis=0)
 
 
 class ForecastWindowDataset(Dataset):

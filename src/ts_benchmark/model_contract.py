@@ -19,7 +19,9 @@ from .model.model_contract import (
     GenerationResult,
     ModelCapabilities,
     RuntimeContext,
-    TSBatch,
+    TrainData,
+    TrainExample,
+    TSSeries,
     TSGeneratorEstimator,
     TaskSpec,
 )
@@ -35,7 +37,9 @@ __all__ = [
     "GenerationResult",
     "ModelCapabilities",
     "RuntimeContext",
-    "TSBatch",
+    "TrainData",
+    "TrainExample",
+    "TSSeries",
     "TSGeneratorEstimator",
     "TaskSpec",
 ]

@@ -504,14 +504,73 @@ class TestConfigValidation:
         cfg = _minimal_config()
         cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
         cfg["benchmark"]["protocol"]["context_length"] = 0
+        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "windowed_path"
+        cfg["benchmark"]["protocol"]["unconditional_train_window_length"] = 24
         config = load_benchmark_config(cfg)
         assert config.protocol.generation_mode == "unconditional"
         assert config.protocol.context_length == 0
+        assert config.protocol.unconditional_train_data_mode == "windowed_path"
+        assert config.protocol.unconditional_train_window_length == 24
 
     def test_unconditional_config_rejects_nonzero_context_length(self) -> None:
         cfg = _minimal_config()
         cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
+        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "windowed_path"
+        cfg["benchmark"]["protocol"]["unconditional_train_window_length"] = 24
         with pytest.raises(ValueError, match="zero for unconditional"):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_config_requires_train_data_mode(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
+        cfg["benchmark"]["protocol"]["context_length"] = 0
+        with pytest.raises(ValueError, match="unconditional_train_data_mode"):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_windowed_path_config_requires_train_window_length(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
+        cfg["benchmark"]["protocol"]["context_length"] = 0
+        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "windowed_path"
+        with pytest.raises(ValueError, match="unconditional_train_window_length"):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_path_dataset_config_loads(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
+        cfg["benchmark"]["protocol"]["context_length"] = 0
+        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "path_dataset"
+        cfg["benchmark"]["protocol"]["unconditional_n_train_paths"] = 5
+        config = load_benchmark_config(cfg)
+        assert config.protocol.generation_mode == "unconditional"
+        assert config.protocol.unconditional_train_data_mode == "path_dataset"
+        assert config.protocol.unconditional_n_train_paths == 5
+
+    def test_unconditional_path_dataset_requires_n_train_paths(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
+        cfg["benchmark"]["protocol"]["context_length"] = 0
+        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "path_dataset"
+        with pytest.raises(ValueError, match="unconditional_n_train_paths"):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_path_dataset_is_restricted_to_synthetic_datasets(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["dataset"]["provider"] = {
+            "kind": "csv",
+            "config": {"path": "dummy.csv"},
+        }
+        cfg["benchmark"]["dataset"]["schema"] = {
+            "layout": "wide",
+            "time_column": "date",
+            "target_columns": ["asset_a", "asset_b"],
+            "frequency": "B",
+        }
+        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
+        cfg["benchmark"]["protocol"]["context_length"] = 0
+        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "path_dataset"
+        cfg["benchmark"]["protocol"]["unconditional_n_train_paths"] = 5
+        with pytest.raises(ValueError, match="currently supported only for synthetic datasets"):
             load_benchmark_config(cfg)
 
     def test_functional_smoke_defaults_are_applied_when_enabled(self) -> None:

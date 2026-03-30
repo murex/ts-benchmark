@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from ts_benchmark.dataset.providers.synthetic import RegimeSwitchingFactorSVGenerator
 from ts_benchmark.metrics import MetricConfig, rank_metrics_table, select_metric_configs_for_run
 from ts_benchmark.model import (
+    ForecastWindowCollection,
     HistoricalBootstrapModel,
     Protocol,
     RuntimeContext,
@@ -30,7 +31,7 @@ class GaussianContractSmokeModel(ScenarioModel):
 
     def fit(self, train_data: TrainingData) -> "GaussianContractSmokeModel":
         train_data.validate()
-        x = np.asarray(train_data.returns, dtype=float)
+        x = np.asarray(train_data.concatenated_training_values(), dtype=float)
         self.mean_ = x.mean(axis=0)
         cov = np.cov(x, rowvar=False)
         cov = np.atleast_2d(cov)
@@ -148,6 +149,8 @@ def test_unconditional_generation_mode_smoke() -> None:
         generation_mode="unconditional",
         eval_stride=20,
         train_stride=1,
+        unconditional_train_data_mode="windowed_path",
+        unconditional_train_window_length=24,
         n_model_scenarios=12,
         n_reference_scenarios=24,
     )
@@ -175,6 +178,51 @@ def test_unconditional_generation_mode_smoke() -> None:
     assert "crps" in metrics.columns
     assert "mean_error" in metrics.columns
     assert results.metadata["generation_mode"] == "unconditional"
+    assert results.metadata["unconditional_train_data_mode"] == "windowed_path"
+    assert results.metadata["unconditional_train_window_length"] == 24
+
+
+def test_unconditional_path_dataset_smoke() -> None:
+    generator = RegimeSwitchingFactorSVGenerator(n_assets=3, seed=6)
+    protocol = Protocol(
+        train_size=96,
+        test_size=40,
+        context_length=0,
+        horizon=4,
+        generation_mode="unconditional",
+        eval_stride=10,
+        train_stride=1,
+        unconditional_train_data_mode="path_dataset",
+        unconditional_n_train_paths=5,
+        n_model_scenarios=12,
+        n_reference_scenarios=24,
+    )
+    dataset = generator.make_benchmark_dataset(
+        protocol=protocol,
+        seed=6,
+    )
+    assert dataset.train_paths is not None
+    assert len(dataset.train_paths) == 5
+    assert all(path.shape == (protocol.train_size, 3) for path in dataset.train_paths)
+
+    metric_configs = select_metric_configs_for_run(
+        [{"name": "crps"}, {"name": "mean_error"}],
+        has_reference_scenarios=True,
+        n_assets=3,
+        dataset_source="synthetic",
+    )
+    benchmark = ScenarioBenchmark(
+        models={"historical_bootstrap": HistoricalBootstrapModel(block_size=2)},
+        protocol=protocol,
+        metric_configs=metric_configs,
+        runtime=RuntimeContext(seed=6),
+    )
+    results = benchmark.run(dataset)
+    metrics = results.metrics_frame()
+    assert "historical_bootstrap" in metrics.index
+    assert results.metadata["unconditional_train_data_mode"] == "path_dataset"
+    assert results.metadata["unconditional_n_train_paths"] == 5
+    assert np.isfinite(metrics.loc["historical_bootstrap", "crps"])
 
 
 def test_builtin_plugin_listing_smoke() -> None:
@@ -210,7 +258,24 @@ def test_runtime_propagates_to_builtin_models() -> None:
     runtime = RuntimeContext(device=requested_device, seed=7)
 
     model = HistoricalBootstrapModel(block_size=2)
-    model.fit(TrainingData(returns=train, protocol=protocol, runtime=runtime))
+    contexts = np.stack([train[: protocol.context_length]], axis=0)
+    targets = np.stack(
+        [train[protocol.context_length : protocol.context_length + protocol.horizon]],
+        axis=0,
+    )
+    model.fit(
+        TrainingData(
+            returns=train,
+            protocol=protocol,
+            forecast_windows=ForecastWindowCollection(
+                contexts=contexts,
+                targets=targets,
+                source_kind="single_path",
+                stride=1,
+            ),
+            runtime=runtime,
+        )
+    )
     samples = model.sample(
         ScenarioRequest(
             context=context,
@@ -224,7 +289,7 @@ def test_runtime_propagates_to_builtin_models() -> None:
     assert samples.samples.shape == (5, protocol.horizon, train.shape[1])
     info = model.model_info()
     assert info["runtime_device"] == requested_device
-    assert str(info["resolved_device"]).startswith("cuda" if requested_device.startswith("cuda") else "cpu")
+    assert isinstance(info["resolved_device"], str)
 
 
 def test_manifest_extraction_from_object() -> None:

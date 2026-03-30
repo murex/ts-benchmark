@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
 Array = Any  # Dense backend array, e.g. np.ndarray, torch.Tensor, or jax.Array.
 
@@ -60,14 +60,14 @@ class DataSchema:
 
 
 @dataclass
-class TSBatch:
-    """Canonical batch payload passed to the model.
+class TSSeries:
+    """Canonical single-series payload passed to the model.
 
     Expected shapes:
-    - `values`: [batch, time, target_dim]
-    - `known_covariates[name]`: [batch, time, covariate_dim]
-    - `observed_covariates[name]`: [batch, time, covariate_dim]
-    - `static_covariates[name]`: [batch, covariate_dim]
+    - `values`: [time, target_dim]
+    - `known_covariates[name]`: [time, covariate_dim]
+    - `observed_covariates[name]`: [time, covariate_dim]
+    - `static_covariates[name]`: [covariate_dim]
 
     The caller is expected to provide clean dense inputs. Handling of
     missing values, ragged histories, and irregular timestamps is outside
@@ -80,12 +80,43 @@ class TSBatch:
     static_covariates: Optional[Mapping[str, Array]] = None
 
 
+@dataclass
+class TrainExample:
+    """Single benchmark-prepared training example.
+
+    `target` is always the model's supervised training target.
+
+    `context` is:
+    - present in forecast mode and shaped `[context_length, target_dim]`
+    - omitted in unconditional mode
+    """
+
+    context: Optional[TSSeries]
+    target: TSSeries
+
+
+@dataclass
+class TrainData:
+    """Benchmark-prepared fit dataset.
+
+    The benchmark may construct these examples from one long path or from a
+    dataset of paths. That provenance is intentionally hidden from the
+    model-facing contract.
+
+    Semantics:
+    - `FORECAST`: every example defines both `context` and `target`
+    - `UNCONDITIONAL`: every example defines `context=None` and `target`
+    """
+
+    examples: Sequence[TrainExample]
+
+
 @dataclass(frozen=True)
 class TaskSpec:
     """What task the caller wants the model to perform.
 
     For `FORECAST`, `horizon` is the requested number of future steps to
-    generate conditional on the history embedded in the batch.
+    generate conditional on the history embedded in the series.
     `context_length` is the intended conditioning history length when the
     caller needs to communicate that explicitly to the model at fit time.
 
@@ -115,11 +146,11 @@ class Constraint:
 class GenerationRequest:
     """Dynamic generation request for a fitted model.
 
-    `batch` carries the conditioning data and optional covariates.
+    `series` carries the conditioning data and optional covariates.
     `num_samples` is the number of trajectories the caller wants back.
     """
 
-    batch: TSBatch
+    series: TSSeries
     task: TaskSpec
     num_samples: int
     constraints: Optional[Sequence[Constraint]] = None
@@ -131,7 +162,7 @@ class GenerationResult:
     """Samples produced by the fitted model.
 
     Expected shape:
-    - `samples`: [batch, num_samples, generated_time, target_dim]
+    - `samples`: [num_samples, generated_time, target_dim]
 
     For `FORECAST`, `generated_time` is typically the requested forecast
     horizon. For `UNCONDITIONAL`, it is the generated sequence length
@@ -192,17 +223,21 @@ class FittedTSGenerator(Protocol):
 class TSGeneratorEstimator(Protocol):
     """Structural interface for a trainable generator estimator.
 
-    The estimator consumes training batches and returns a fitted generator
-    plus an optional fit summary.
+    The estimator consumes caller-prepared training data and returns a
+    fitted generator plus an optional fit summary.
+
+    `train.examples` depends on the task family:
+    - `FORECAST`: each example defines both `context` and `target`
+    - `UNCONDITIONAL`: each example defines `context=None` and `target`
     """
 
     def fit(
         self,
-        train: Iterable[TSBatch],
+        train: TrainData,
         *,
         schema: DataSchema,
         task: TaskSpec,
-        valid: Optional[Iterable[TSBatch]] = None,
+        valid: Optional[TrainData] = None,
         runtime: Optional[RuntimeContext] = None,
     ) -> tuple[FittedTSGenerator, FitReport]:
         ...

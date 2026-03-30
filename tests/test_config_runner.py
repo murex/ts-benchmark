@@ -33,6 +33,8 @@ def _small_synthetic_config(
     seed: int = 7,
     generation_mode: str = "forecast",
     context_length: int | None = None,
+    unconditional_train_data_mode: str | None = None,
+    unconditional_n_train_paths: int | None = None,
     device: str | None = None,
     scheduler: str = "auto",
     output_dir: str | None = None,
@@ -41,6 +43,21 @@ def _small_synthetic_config(
     if device is not None:
         execution["device"] = device
     resolved_context_length = 6 if context_length is None and generation_mode == "forecast" else 0 if context_length is None else int(context_length)
+    resolved_unconditional_train_data_mode = unconditional_train_data_mode
+    if generation_mode == "unconditional" and resolved_unconditional_train_data_mode is None:
+        resolved_unconditional_train_data_mode = "windowed_path"
+    unconditional_train_window_length = (
+        24
+        if generation_mode == "unconditional" and resolved_unconditional_train_data_mode == "windowed_path"
+        else None
+    )
+    resolved_unconditional_n_train_paths = (
+        6
+        if generation_mode == "unconditional"
+        and resolved_unconditional_train_data_mode == "path_dataset"
+        and unconditional_n_train_paths is None
+        else unconditional_n_train_paths
+    )
 
     return {
         "version": "1.0",
@@ -66,6 +83,9 @@ def _small_synthetic_config(
                 "generation_mode": generation_mode,
                 "eval_stride": 6,
                 "train_stride": 1,
+                "unconditional_train_data_mode": resolved_unconditional_train_data_mode,
+                "unconditional_train_window_length": unconditional_train_window_length,
+                "unconditional_n_train_paths": resolved_unconditional_n_train_paths,
                 "n_model_scenarios": 6,
                 "n_reference_scenarios": 10,
             },
@@ -114,12 +134,12 @@ def _write_external_structural_model(path: Path) -> None:
                     )
 
                 def sample(self, request):
-                    values = np.asarray(request.batch.values, dtype=float)
+                    values = np.asarray(request.series.values, dtype=float)
                     horizon = int(request.task.horizon or 1)
                     num_samples = int(request.num_samples)
-                    last = values[:, -1:, :] + self.shift
-                    tiled = np.repeat(last, horizon, axis=1)
-                    samples = np.repeat(tiled[:, None, :, :], num_samples, axis=1)
+                    last = values[-1:, :] + self.shift
+                    tiled = np.repeat(last, horizon, axis=0)
+                    samples = np.repeat(tiled[None, :, :], num_samples, axis=0)
                     return SimpleNamespace(
                         samples=samples,
                         diagnostics={"source": "temp_external_structural_model"},
@@ -477,9 +497,40 @@ def test_unconditional_config_runner_smoke(tmp_path: Path) -> None:
     metrics = artifacts.results.metrics_frame(include_metadata=True)
     assert artifacts.run.status == "succeeded"
     assert metrics.loc["unconditional_debug_model", "generation_mode"] == "unconditional"
+    assert metrics.loc["unconditional_debug_model", "unconditional_train_data_mode"] == "windowed_path"
     assert metrics.loc["unconditional_debug_model", "crps"] >= 0.0
     scenarios = artifacts.results.model_results[0].scenario_output
     assert scenarios is None
+
+
+def test_unconditional_path_dataset_config_runner_smoke(tmp_path: Path) -> None:
+    output_dir = tmp_path / "unconditional_path_dataset_run"
+    config = _small_synthetic_config(
+        seed=39,
+        generation_mode="unconditional",
+        unconditional_train_data_mode="path_dataset",
+        unconditional_n_train_paths=5,
+        models=[
+            {
+                "name": "unconditional_debug_model",
+                "reference": {
+                    "kind": "entrypoint",
+                    "value": "ts_benchmark.model.builtins.debug_smoke_model:DebugSmokeModel",
+                },
+                "params": {"scale": 1.0},
+                "pipeline": {"name": "raw", "steps": []},
+            }
+        ],
+        output_dir=str(output_dir),
+    )
+
+    artifacts = run_benchmark_from_config(config)
+    metrics = artifacts.results.metrics_frame(include_metadata=True)
+    assert artifacts.run.status == "succeeded"
+    assert metrics.loc["unconditional_debug_model", "generation_mode"] == "unconditional"
+    assert metrics.loc["unconditional_debug_model", "unconditional_train_data_mode"] == "path_dataset"
+    assert metrics.loc["unconditional_debug_model", "unconditional_n_train_paths"] == 5
+    assert metrics.loc["unconditional_debug_model", "crps"] >= 0.0
 
 
 def test_entrypoint_model_smoke() -> None:

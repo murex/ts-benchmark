@@ -2,54 +2,30 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import inspect
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
 from ...serialization import to_jsonable
 from ...utils import JsonObject
-from ..contracts import RuntimeContext, ScenarioModel, ScenarioRequest, ScenarioSamples, TrainingData
-
-
-@dataclass(frozen=True)
-class _ExternalRuntime:
-    device: str | None = None
-    seed: int | None = None
-
-
-@dataclass(frozen=True)
-class _ExternalSchema:
-    target_dim: int
-    freq: str | None = None
-    known_covariates: Mapping[str, int] | None = None
-    observed_covariates: Mapping[str, int] | None = None
-    static_covariates: Mapping[str, int] | None = None
-
-
-@dataclass
-class _ExternalBatch:
-    values: np.ndarray
-    known_covariates: Mapping[str, np.ndarray] | None = None
-    observed_covariates: Mapping[str, np.ndarray] | None = None
-    static_covariates: Mapping[str, np.ndarray] | None = None
-
-
-@dataclass(frozen=True)
-class _ExternalTask:
-    mode: str
-    horizon: int | None = None
-    context_length: int | None = None
-
-
-@dataclass
-class _ExternalRequest:
-    batch: _ExternalBatch
-    task: _ExternalTask
-    num_samples: int
-    constraints: list[object] | None = None
-    runtime: _ExternalRuntime | None = None
+from ..contracts import (
+    RuntimeContext as BenchmarkRuntimeContext,
+    ScenarioModel,
+    ScenarioRequest,
+    ScenarioSamples,
+    TrainingData,
+)
+from ..model_contract import (
+    DataSchema as ExternalSchema,
+    GenerationMode as ExternalMode,
+    GenerationRequest as ExternalRequest,
+    RuntimeContext as ExternalRuntime,
+    TrainData as ExternalTrainData,
+    TrainExample as ExternalTrainExample,
+    TSSeries as ExternalSeries,
+    TaskSpec as ExternalTask,
+)
 
 
 def _looks_like_structured_estimator(candidate: object) -> bool:
@@ -99,16 +75,47 @@ def _fit_report_to_builtin(report: object | None) -> dict[str, object] | None:
     return {key: to_jsonable(value) for key, value in payload.items() if value is not None}
 
 
-def _runtime_hints(runtime: RuntimeContext | None, *, seed_override: int | None = None) -> _ExternalRuntime:
-    return _ExternalRuntime(
+def _runtime_hints(runtime: BenchmarkRuntimeContext | None, *, seed_override: int | None = None) -> ExternalRuntime:
+    return ExternalRuntime(
         device=None if runtime is None else runtime.device,
         seed=seed_override if seed_override is not None else (None if runtime is None else runtime.seed),
     )
 
 
-def _training_batches(train_data: TrainingData) -> list[_ExternalBatch]:
-    values = np.asarray(train_data.returns, dtype=float)
-    return [_ExternalBatch(values=np.expand_dims(values, axis=0))]
+def _training_payload(
+    train_data: TrainingData,
+) -> ExternalTrainData:
+    if str(train_data.protocol.generation_mode) == "forecast":
+        if train_data.forecast_windows is None:
+            raise ValueError(
+                "Forecast training data must include forecast_windows before bridging to the structural contract."
+            )
+        return ExternalTrainData(
+            examples=[
+                ExternalTrainExample(
+                    context=ExternalSeries(values=np.asarray(context, dtype=float)),
+                    target=ExternalSeries(values=np.asarray(target, dtype=float)),
+                )
+                for context, target in zip(
+                    train_data.forecast_windows.contexts,
+                    train_data.forecast_windows.targets,
+                    strict=True,
+                )
+            ]
+        )
+    if train_data.path_collection is None:
+        raise ValueError(
+            "Unconditional training data must include path_collection before bridging to the structural contract."
+        )
+    return ExternalTrainData(
+        examples=[
+            ExternalTrainExample(
+                context=None,
+                target=ExternalSeries(values=np.asarray(path, dtype=float)),
+            )
+            for path in train_data.path_collection.paths
+        ],
+    )
 
 
 class DuckTypedGeneratorScenarioModel(ScenarioModel):
@@ -122,15 +129,15 @@ class DuckTypedGeneratorScenarioModel(ScenarioModel):
 
     def fit(self, train_data: TrainingData) -> "DuckTypedGeneratorScenarioModel":
         train_data.validate()
-        schema = _ExternalSchema(
+        schema = ExternalSchema(
             target_dim=train_data.n_assets,
             freq=train_data.freq,
             known_covariates=None,
             observed_covariates=None,
             static_covariates=None,
         )
-        task = _ExternalTask(
-            mode=str(train_data.protocol.generation_mode),
+        task = ExternalTask(
+            mode=ExternalMode(str(train_data.protocol.generation_mode)),
             horizon=int(train_data.protocol.horizon),
             context_length=(
                 int(train_data.protocol.context_length)
@@ -139,7 +146,7 @@ class DuckTypedGeneratorScenarioModel(ScenarioModel):
             ),
         )
         engine, fit_report = self.estimator.fit(
-            _training_batches(train_data),
+            _training_payload(train_data),
             schema=schema,
             task=task,
             valid=None,
@@ -154,14 +161,14 @@ class DuckTypedGeneratorScenarioModel(ScenarioModel):
         if self._engine is None:
             raise RuntimeError("Model must be fit before sampling.")
 
-        batch = _ExternalBatch(values=np.expand_dims(np.asarray(request.context, dtype=float), axis=0))
-        task = _ExternalTask(
-            mode=str(request.mode),
+        series = ExternalSeries(values=np.asarray(request.context, dtype=float))
+        task = ExternalTask(
+            mode=ExternalMode(str(request.mode)),
             horizon=int(request.horizon),
             context_length=int(request.context.shape[0]) if str(request.mode) == "forecast" else None,
         )
-        external_request = _ExternalRequest(
-            batch=batch,
+        external_request = ExternalRequest(
+            series=series,
             task=task,
             num_samples=int(request.n_scenarios),
             constraints=None,
@@ -169,17 +176,10 @@ class DuckTypedGeneratorScenarioModel(ScenarioModel):
         )
         result = self._engine.sample(external_request)
         samples = np.asarray(getattr(result, "samples"), dtype=float)
-        if samples.ndim == 4:
-            if samples.shape[0] != 1:
-                raise ValueError(
-                    "External generator returned batched samples with batch dimension "
-                    f"{samples.shape[0]}; benchmark adapter expected a single context batch."
-                )
-            samples = samples[0]
         if samples.ndim != 3:
             raise ValueError(
                 "External generator returned samples with unsupported shape; expected "
-                "[num_samples, horizon, target_dim] or [1, num_samples, horizon, target_dim]."
+                "[num_samples, horizon, target_dim]."
             )
 
         diagnostics = getattr(result, "diagnostics", None)

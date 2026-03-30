@@ -8,10 +8,18 @@ import numpy as np
 
 from ..benchmark.protocol import Protocol
 from ..dataset.runtime import DatasetInstance
+from ..dataset.windows import rolling_context_future_pairs, rolling_series_windows
 from ..metrics.definition import MetricConfig
 from ..metrics.distributional import compute_distributional_metrics
 from ..metrics.scoring import compute_sample_scoring_metrics
-from ..model.contracts import RuntimeContext, ScenarioModel, ScenarioRequest, TrainingData
+from ..model.contracts import (
+    ForecastWindowCollection,
+    RuntimeContext,
+    ScenarioModel,
+    ScenarioRequest,
+    TrainPathCollection,
+    TrainingData,
+)
 from ..results import BenchmarkResults, MetricResult, ModelResult, ScenarioOutput
 from ..serialization import to_jsonable
 from ..utils import JsonObject
@@ -43,18 +51,108 @@ class ScenarioBenchmark:
     def _runtime(self) -> RuntimeContext:
         return RuntimeContext(device=self.runtime.device, seed=self.runtime.seed)
 
+    def _forecast_window_collection(self, dataset: DatasetInstance) -> ForecastWindowCollection:
+        contexts_parts: list[np.ndarray] = []
+        targets_parts: list[np.ndarray] = []
+        source_kind = "single_path"
+        if dataset.train_paths is not None:
+            source_kind = "path_dataset"
+            for path in dataset.train_paths:
+                contexts, targets = rolling_context_future_pairs(
+                    path,
+                    context_length=self.protocol.context_length,
+                    horizon=self.protocol.horizon,
+                    stride=self.protocol.train_stride,
+                )
+                contexts_parts.append(np.asarray(contexts, dtype=float))
+                targets_parts.append(np.asarray(targets, dtype=float))
+        else:
+            contexts, targets = rolling_context_future_pairs(
+                dataset.train_returns,
+                context_length=self.protocol.context_length,
+                horizon=self.protocol.horizon,
+                stride=self.protocol.train_stride,
+            )
+            contexts_parts.append(np.asarray(contexts, dtype=float))
+            targets_parts.append(np.asarray(targets, dtype=float))
+        return ForecastWindowCollection(
+            contexts=np.concatenate(contexts_parts, axis=0),
+            targets=np.concatenate(targets_parts, axis=0),
+            source_kind=source_kind,
+            stride=self.protocol.train_stride,
+        )
+
+    def _unconditional_path_collection(self, dataset: DatasetInstance) -> TrainPathCollection:
+        train_data_mode = self.protocol.unconditional_train_data_mode
+        if train_data_mode == "path_dataset":
+            if dataset.train_paths is None:
+                raise ValueError(
+                    "Dataset does not expose train_paths, but the benchmark protocol requested "
+                    "unconditional_train_data_mode='path_dataset'."
+                )
+            return TrainPathCollection(
+                paths=[np.asarray(path, dtype=float) for path in dataset.train_paths],
+                source_kind="path_dataset",
+            )
+        if train_data_mode != "windowed_path":
+            raise ValueError(
+                "Unconditional benchmarks require protocol.unconditional_train_data_mode to be "
+                "'windowed_path' or 'path_dataset'."
+            )
+        window_length = self.protocol.unconditional_train_window_length
+        if window_length is None:
+            raise ValueError(
+                "Unconditional windowed-path benchmarks require protocol.unconditional_train_window_length."
+            )
+        windows = rolling_series_windows(
+            dataset.train_returns,
+            window_length=window_length,
+            stride=self.protocol.train_stride,
+        )
+        return TrainPathCollection(
+            paths=[np.asarray(window, dtype=float) for window in windows],
+            source_kind="windowed_path",
+            window_length=window_length,
+            stride=self.protocol.train_stride,
+        )
+
     def _training_data(self, dataset: DatasetInstance) -> TrainingData:
+        forecast_windows = None
+        path_collection = None
+        if self.protocol.generation_mode == "forecast":
+            forecast_windows = self._forecast_window_collection(dataset)
+        else:
+            path_collection = self._unconditional_path_collection(dataset)
         return TrainingData(
             returns=dataset.train_returns,
             protocol=self.protocol,
             asset_names=list(dataset.asset_names),
             freq=self.freq,
+            forecast_windows=forecast_windows,
+            path_collection=path_collection,
             runtime=self._runtime(),
             metadata=JsonObject(
                 {
                     "dataset_name": dataset.name,
                     "dataset_source": dataset.source,
                     "runtime": to_jsonable(self._runtime()),
+                    "forecast_window_collection": None
+                    if forecast_windows is None
+                    else {
+                        "source_kind": forecast_windows.source_kind,
+                        "n_windows": int(forecast_windows.contexts.shape[0]),
+                        "context_length": int(forecast_windows.contexts.shape[1]),
+                        "horizon": int(forecast_windows.targets.shape[1]),
+                        "stride": forecast_windows.stride,
+                    },
+                    "path_collection": None
+                    if path_collection is None
+                    else {
+                        "source_kind": path_collection.source_kind,
+                        "n_paths": len(path_collection.paths),
+                        "window_length": path_collection.window_length,
+                        "stride": path_collection.stride,
+                    },
                 }
             ),
         )

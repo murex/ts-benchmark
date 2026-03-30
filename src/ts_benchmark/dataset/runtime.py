@@ -35,6 +35,7 @@ class DatasetInstance:
     asset_names: list[str]
     protocol: Protocol
     freq: str = "B"
+    train_paths: list[np.ndarray] | None = None
     metadata: JsonObject = field(default_factory=JsonObject)
     evaluation_timestamps: list[str] | None = None
     reference_sampler: ReferenceSampler | None = field(default=None, repr=False, compare=False)
@@ -42,6 +43,8 @@ class DatasetInstance:
     def __post_init__(self) -> None:
         if not isinstance(self.metadata, JsonObject):
             self.metadata = JsonObject(self.metadata)
+        if self.train_paths is not None:
+            self.train_paths = [np.asarray(path, dtype=float) for path in self.train_paths]
 
     @property
     def context_length(self) -> int:
@@ -86,6 +89,7 @@ class DatasetInstance:
             "freq": self.freq,
             "n_timesteps": int(np.asarray(self.full_returns).shape[0]),
             "n_assets": int(np.asarray(self.train_returns).shape[1]),
+            "n_train_paths": None if self.train_paths is None else len(self.train_paths),
             "asset_names": list(self.asset_names),
             **to_jsonable(self.protocol),
             "n_eval_windows": int(np.asarray(self.contexts).shape[0]),

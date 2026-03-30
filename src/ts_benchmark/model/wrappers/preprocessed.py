@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
+
 from ...preprocessing import PreprocessingPipeline
 from ...utils import JsonObject
-from ..contracts import ScenarioModel, ScenarioRequest, ScenarioSamples, TrainingData
+from ..contracts import (
+    ForecastWindowCollection,
+    ScenarioModel,
+    ScenarioRequest,
+    ScenarioSamples,
+    TrainPathCollection,
+    TrainingData,
+)
 
 
 class PreprocessedScenarioModel(ScenarioModel):
@@ -24,12 +33,37 @@ class PreprocessedScenarioModel(ScenarioModel):
 
     def fit(self, train_data: TrainingData) -> "PreprocessedScenarioModel":
         train_data.validate()
-        self.pipeline.fit(train_data.returns)
+        fit_values = train_data.concatenated_training_values()
+        self.pipeline.fit(fit_values)
+        transformed_forecast_windows = None
+        if train_data.forecast_windows is not None:
+            transformed_forecast_windows = ForecastWindowCollection(
+                contexts=np.asarray(
+                    [self.pipeline.transform(context) for context in train_data.forecast_windows.contexts],
+                    dtype=float,
+                ),
+                targets=np.asarray(
+                    [self.pipeline.transform(target) for target in train_data.forecast_windows.targets],
+                    dtype=float,
+                ),
+                source_kind=train_data.forecast_windows.source_kind,
+                stride=train_data.forecast_windows.stride,
+            )
+        transformed_path_collection = None
+        if train_data.path_collection is not None:
+            transformed_path_collection = TrainPathCollection(
+                paths=[self.pipeline.transform(path) for path in train_data.path_collection.paths],
+                source_kind=train_data.path_collection.source_kind,
+                window_length=train_data.path_collection.window_length,
+                stride=train_data.path_collection.stride,
+            )
         transformed = TrainingData(
             returns=self.pipeline.transform(train_data.returns),
             protocol=train_data.protocol,
             asset_names=train_data.asset_names,
             freq=train_data.freq,
+            forecast_windows=transformed_forecast_windows,
+            path_collection=transformed_path_collection,
             runtime=train_data.runtime,
             metadata=JsonObject(
                 {

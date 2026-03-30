@@ -7,6 +7,7 @@ from importlib import import_module
 _EXPORT_TO_MODULE = {
     "DebugSmokeModel": ".builtins",
     "ExternalProcessScenarioModel": ".wrappers",
+    "ForecastWindowCollection": ".contracts",
     "HistoricalBootstrapModel": ".builtins",
     "ModelConfig": ".definition",
     "ModelExecutionConfig": ".definition",
@@ -19,6 +20,7 @@ _EXPORT_TO_MODULE = {
     "ScenarioRequest": ".contracts",
     "ScenarioSamples": ".contracts",
     "StochasticVolatilityBootstrapModel": ".builtins",
+    "TrainPathCollection": ".contracts",
     "TrainingData": ".contracts",
     "build_model": ".factory",
     "build_pipeline": ".factory",

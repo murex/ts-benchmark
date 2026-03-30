@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
@@ -42,51 +42,74 @@ def runtime_device(runtime: object | None) -> str | None:
     return getattr(runtime, "device", None)
 
 
-def coerce_values(batch_like: object) -> np.ndarray:
-    values = np.asarray(getattr(batch_like, "values"), dtype=float)
-    if values.ndim != 3:
-        raise ValueError("batch.values must be shaped [batch, time, target_dim].")
-    if values.shape[1] < 1:
-        raise ValueError("batch.values must contain at least one timestep.")
+def coerce_series_values(series_like: object) -> np.ndarray:
+    values = np.asarray(getattr(series_like, "values"), dtype=float)
+    if values.ndim != 2:
+        raise ValueError("series.values must be shaped [time, target_dim].")
+    if values.shape[0] < 1:
+        raise ValueError("series.values must contain at least one timestep.")
     return values
 
 
-def collect_training_batches(train: Iterable[object], *, target_dim: int) -> list[np.ndarray]:
-    batches: list[np.ndarray] = []
-    for batch_like in train:
-        values = coerce_values(batch_like)
-        if values.shape[-1] != target_dim:
+def coerce_training_series_values(series_like: object, *, target_dim: int) -> np.ndarray:
+    values = coerce_series_values(series_like)
+    if values.shape[-1] != target_dim:
+        raise ValueError(
+            f"schema.target_dim={target_dim} does not match training series target_dim={values.shape[-1]}."
+        )
+    if values.shape[0] < 2:
+        raise ValueError("training series must contain at least two timesteps.")
+    return values
+
+
+def coerce_forecast_training_series_collection(
+    train_like: object,
+    *,
+    target_dim: int,
+    context_length: int,
+    horizon: int,
+) -> list[np.ndarray]:
+    examples = getattr(train_like, "examples", None)
+    if examples is None:
+        raise ValueError("forecast adapters expect train.examples in TrainData.")
+    series_collection: list[np.ndarray] = []
+    for index, example in enumerate(examples):
+        context_like = getattr(example, "context", None)
+        target_like = getattr(example, "target", None)
+        if context_like is None or target_like is None:
             raise ValueError(
-                f"schema.target_dim={target_dim} does not match training batch target_dim={values.shape[-1]}."
+                f"train.examples[{index}] must define both context and target series."
             )
-        if values.shape[1] < 2:
-            raise ValueError("training batches must contain at least two timesteps.")
-        batches.append(values)
-    if not batches:
-        raise ValueError("at least one training batch is required.")
-    return batches
+        context_values = coerce_series_values(context_like)
+        target_values = coerce_series_values(target_like)
+        if context_values.shape[-1] != target_dim:
+            raise ValueError(
+                f"train.examples[{index}].context target_dim={context_values.shape[-1]} "
+                f"does not match schema.target_dim={target_dim}."
+            )
+        if target_values.shape[-1] != target_dim:
+            raise ValueError(
+                f"train.examples[{index}].target target_dim={target_values.shape[-1]} "
+                f"does not match schema.target_dim={target_dim}."
+            )
+        if context_values.shape[0] != context_length:
+            raise ValueError(
+                f"train.examples[{index}].context has length {context_values.shape[0]} "
+                f"but expected context_length={context_length}."
+            )
+        if target_values.shape[0] != horizon:
+            raise ValueError(
+                f"train.examples[{index}].target has length {target_values.shape[0]} "
+                f"but expected horizon={horizon}."
+            )
+        series_collection.append(np.concatenate([context_values, target_values], axis=0))
+    if not series_collection:
+        raise ValueError("forecast training data must contain at least one example.")
+    return series_collection
 
 
-def make_list_dataset_from_values(values: np.ndarray, *, freq: str, install_extra: str):
-    try:
-        import pandas as pd
-        from gluonts.dataset.common import ListDataset  # type: ignore
-    except Exception as exc:  # pragma: no cover - optional dependency
-        raise ImportError(
-            "This adapter requires `gluonts` and `pandas`. Install the "
-            f"`{install_extra}` extra."
-        ) from exc
-
-    start = pd.Period("2000-01-03", freq=freq)
-    entries = [
-        {"start": start, "target": np.asarray(values[index], dtype=np.float32).T}
-        for index in range(values.shape[0])
-    ]
-    return ListDataset(entries, freq=freq, one_dim_target=False)
-
-
-def make_list_dataset_from_batches(
-    batches: Iterable[np.ndarray],
+def make_list_dataset_from_series_collection(
+    values_collection: list[np.ndarray],
     *,
     freq: str,
     install_extra: str,
@@ -101,14 +124,19 @@ def make_list_dataset_from_batches(
         ) from exc
 
     start = pd.Period("2000-01-03", freq=freq)
-    entries: list[dict[str, object]] = []
-    for values in batches:
-        entries.extend(
-            {"start": start, "target": np.asarray(values[index], dtype=np.float32).T}
-            for index in range(values.shape[0])
-        )
+    entries = [
+        {"start": start, "target": np.asarray(values, dtype=np.float32).T}
+        for values in values_collection
+    ]
     return ListDataset(entries, freq=freq, one_dim_target=False)
 
+
+def make_list_dataset_from_series(values: np.ndarray, *, freq: str, install_extra: str):
+    return make_list_dataset_from_series_collection(
+        [np.asarray(values, dtype=float)],
+        freq=freq,
+        install_extra=install_extra,
+    )
 
 def normalize_forecast_samples(
     samples: np.ndarray,

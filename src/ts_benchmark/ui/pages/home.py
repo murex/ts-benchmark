@@ -8,11 +8,19 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from ..services.configs import list_saved_benchmarks
+from ..services.configs import load_saved_benchmark, list_saved_benchmarks
 from ..services.datasets import list_saved_datasets
 from ..services.model_catalog import list_model_catalog
 from ..services.runs import load_run_artifacts
-from ..state import set_page, set_selected_run_dir
+from ..state import (
+    set_current_config,
+    set_current_config_path,
+    set_current_run,
+    set_current_run_artifacts,
+    set_page,
+    set_selected_run_dir,
+    set_validation_result,
+)
 
 RESULT_METADATA_COLUMNS = {
     "dataset_name",
@@ -26,11 +34,17 @@ RESULT_METADATA_COLUMNS = {
     "horizon",
     "eval_stride",
     "train_stride",
+    "unconditional_train_data_mode",
+    "unconditional_train_window_length",
+    "unconditional_n_train_paths",
     "n_model_scenarios",
     "n_reference_scenarios",
     "execution_mode",
     "average_rank",
 }
+BENCHMARKS_PENDING_SECTION_KEY = "benchmarks.pending_section"
+BENCHMARKS_PENDING_EDITOR_VIEW_KEY = "benchmarks.pending_editor_view"
+MODEL_CATALOG_RETURN_SOURCE_KEY = "model_catalog.return_source"
 
 
 def _benchmark_catalog_frame(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -110,9 +124,22 @@ def _result_model_table(artifacts: dict[str, object]) -> pd.DataFrame | None:
     return frame
 
 
+def _open_benchmark(row: dict[str, Any]) -> None:
+    config = load_saved_benchmark(str(row["name"]))
+    set_current_config(config)
+    set_current_config_path(Path(str(row["path"])))
+    set_current_run(None)
+    set_current_run_artifacts(None)
+    set_validation_result(None)
+    st.session_state[BENCHMARKS_PENDING_SECTION_KEY] = "Benchmark"
+    st.session_state[BENCHMARKS_PENDING_EDITOR_VIEW_KEY] = "Definition"
+    set_page("Benchmarks")
+    st.rerun()
+
+
 def render() -> None:
     st.header("Home")
-    st.caption("Workspace overview centered on official benchmark definitions, their latest results, datasets, and models.")
+    st.caption("Workspace overview centered on benchmarks, datasets, and models.")
 
     benchmark_rows = sorted(list_saved_benchmarks(), key=lambda row: str(row.get("name") or "").lower())
     dataset_rows = sorted(list_saved_datasets(), key=lambda row: str(row.get("name") or "").lower())
@@ -125,58 +152,44 @@ def render() -> None:
     summary_cols[2].metric("Datasets", str(len(dataset_rows)))
     summary_cols[3].metric("Models", str(len(model_rows)))
 
-    top_left, top_right = st.columns([1.15, 1.35])
-    with top_left:
-        st.subheader("Official Benchmarks")
-        if not benchmark_rows:
-            st.info("No official benchmarks are available yet.")
+    st.subheader("Benchmarks")
+    if not benchmarks_with_results:
+        st.info("No benchmark results are available yet.")
+    else:
+        options = {str(row["name"]): row for row in benchmarks_with_results}
+        selected_name = st.selectbox(
+            "Benchmarks",
+            options=list(options),
+            key="home.results.benchmark",
+            label_visibility="collapsed",
+        )
+        selected_row = dict(options[selected_name])
+        selected_run = Path(str(selected_row["results_run_dir"]))
+        try:
+            artifacts = load_run_artifacts(selected_run)
+        except Exception as exc:
+            st.error(f"Could not load saved results for '{selected_row['name']}': {exc}")
         else:
-            st.dataframe(_benchmark_catalog_frame(benchmark_rows), use_container_width=True, hide_index=True)
-            actions = st.columns(2)
-            if actions[0].button("Open Benchmarks", key="home.benchmarks.open", use_container_width=True):
-                set_page("Benchmarks")
+            model_table = _result_model_table(artifacts)
+            if model_table is None or model_table.empty:
+                st.info("No model metrics were saved for this benchmark result.")
+            else:
+                st.dataframe(model_table, use_container_width=True, hide_index=True)
+
+            result_actions = st.columns(3)
+            if result_actions[0].button("Open benchmark", key="home.results.benchmark_open", use_container_width=True):
+                _open_benchmark(selected_row)
+            if result_actions[1].button(
+                "Open Results Explorer",
+                key="home.results.open",
+                use_container_width=True,
+            ):
+                set_selected_run_dir(selected_run)
+                set_page("Results Explorer")
                 st.rerun()
-            if actions[1].button("Open Run Lab", key="home.benchmarks.run_lab", use_container_width=True):
+            if result_actions[2].button("Open Run Lab", key="home.results.run_lab", use_container_width=True):
                 set_page("Run Lab")
                 st.rerun()
-
-    with top_right:
-        st.subheader("Benchmark Results")
-        if not benchmarks_with_results:
-            st.info("No benchmark results are available yet.")
-        else:
-            options = {str(row["name"]): row for row in benchmarks_with_results}
-            selected_name = st.selectbox(
-                "Benchmark results",
-                options=list(options),
-                key="home.results.benchmark",
-                label_visibility="collapsed",
-            )
-            selected_row = dict(options[selected_name])
-            selected_run = Path(str(selected_row["results_run_dir"]))
-            try:
-                artifacts = load_run_artifacts(selected_run)
-            except Exception as exc:
-                st.error(f"Could not load saved results for '{selected_row['name']}': {exc}")
-            else:
-                model_table = _result_model_table(artifacts)
-                if model_table is None or model_table.empty:
-                    st.info("No model metrics were saved for this benchmark result.")
-                else:
-                    st.dataframe(model_table, use_container_width=True, hide_index=True)
-
-                result_actions = st.columns(2)
-                if result_actions[0].button(
-                    "Open Results Explorer",
-                    key="home.results.open",
-                    use_container_width=True,
-                ):
-                    set_selected_run_dir(selected_run)
-                    set_page("Results Explorer")
-                    st.rerun()
-                if result_actions[1].button("Open Run Lab", key="home.results.run_lab", use_container_width=True):
-                    set_page("Run Lab")
-                    st.rerun()
 
     lower_left, lower_right = st.columns(2)
     with lower_left:
@@ -196,5 +209,6 @@ def render() -> None:
         else:
             st.dataframe(_model_catalog_frame(model_rows), use_container_width=True, hide_index=True)
             if st.button("Open Model Catalog", key="home.models.open", use_container_width=True):
+                st.session_state[MODEL_CATALOG_RETURN_SOURCE_KEY] = None
                 set_page("Model Catalog")
                 st.rerun()

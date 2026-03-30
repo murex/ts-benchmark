@@ -39,6 +39,10 @@ def test_root_public_api_is_small_and_model_contract_is_importable() -> None:
         "validate_benchmark_config",
     ]
     assert hasattr(model_contract, "TSGeneratorEstimator")
+    assert hasattr(model_contract, "TSSeries")
+    assert hasattr(model_contract, "TrainExample")
+    assert hasattr(model_contract, "TrainData")
+    assert not hasattr(model_contract, "TSBatch")
     assert hasattr(model_contract, "GenerationMode")
 
 

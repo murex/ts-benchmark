@@ -10,8 +10,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ts_benchmark.benchmark.protocol import Protocol
-from ts_benchmark.model import RuntimeContext, ScenarioRequest, TrainingData
-from ts_benchmark.model.model_contract import FitReport, GenerationMode, GenerationResult, ModelCapabilities
+from ts_benchmark.model import (
+    ForecastWindowCollection,
+    RuntimeContext,
+    ScenarioRequest,
+    TrainPathCollection,
+    TrainingData,
+)
+from ts_benchmark.model.model_contract import (
+    FitReport,
+    GenerationMode,
+    GenerationResult,
+    ModelCapabilities,
+)
 from ts_benchmark.model.wrappers.duck_typed import DuckTypedGeneratorScenarioModel
 
 
@@ -23,7 +34,7 @@ class _DummyGenerator:
 
     def sample(self, request) -> GenerationResult:
         return GenerationResult(
-            samples=np.zeros((1, request.num_samples, request.task.horizon, 2), dtype=float),
+            samples=np.zeros((request.num_samples, request.task.horizon, 2), dtype=float),
             diagnostics={
                 "mode": getattr(request.task, "mode", None),
                 "context_length": getattr(request.task, "context_length", None),
@@ -36,11 +47,17 @@ class _DummyGenerator:
 
 class _DummyEstimator:
     def fit(self, train, *, schema, task, valid=None, runtime=None):
-        del train, schema, valid, runtime
+        examples = list(getattr(train, "examples", []))
+        n_context_examples = sum(example.context is not None for example in examples)
+        train_kind = "forecast_examples" if n_context_examples else "unconditional_examples"
+        del schema, valid, runtime
         return _DummyGenerator(), FitReport(
             diagnostics={
                 "mode": getattr(task, "mode", None),
                 "context_length": getattr(task, "context_length", None),
+                "train_kind": train_kind,
+                "n_train_examples": len(examples),
+                "n_context_examples": n_context_examples,
             }
         )
 
@@ -66,6 +83,12 @@ def test_duck_typed_bridge_passes_context_length_to_structural_estimators() -> N
     training_data = TrainingData(
         returns=np.ones((24, 2), dtype=float),
         protocol=protocol,
+        forecast_windows=ForecastWindowCollection(
+            contexts=np.ones((18, 5, 2), dtype=float),
+            targets=np.ones((18, 2, 2), dtype=float),
+            source_kind="single_path",
+            stride=1,
+        ),
         runtime=RuntimeContext(device="cpu", seed=11),
     )
     model.fit(training_data)
@@ -73,6 +96,9 @@ def test_duck_typed_bridge_passes_context_length_to_structural_estimators() -> N
     info = model.model_info()
     assert info["fit_report"]["diagnostics"]["mode"] == "forecast"
     assert info["fit_report"]["diagnostics"]["context_length"] == protocol.context_length
+    assert info["fit_report"]["diagnostics"]["train_kind"] == "forecast_examples"
+    assert info["fit_report"]["diagnostics"]["n_train_examples"] == 18
+    assert info["fit_report"]["diagnostics"]["n_context_examples"] == 18
 
     request = ScenarioRequest(
         context=np.ones((protocol.context_length, 2), dtype=float),
@@ -95,6 +121,8 @@ def test_duck_typed_bridge_passes_unconditional_mode_without_context_length() ->
         generation_mode="unconditional",
         eval_stride=2,
         train_stride=1,
+        unconditional_train_data_mode="windowed_path",
+        unconditional_train_window_length=6,
         n_model_scenarios=4,
         n_reference_scenarios=8,
     )
@@ -102,6 +130,12 @@ def test_duck_typed_bridge_passes_unconditional_mode_without_context_length() ->
     training_data = TrainingData(
         returns=np.ones((24, 2), dtype=float),
         protocol=protocol,
+        path_collection=TrainPathCollection(
+            paths=[np.ones((6, 2), dtype=float) for _ in range(19)],
+            source_kind="windowed_path",
+            window_length=6,
+            stride=1,
+        ),
         runtime=RuntimeContext(device="cpu", seed=11),
     )
     model.fit(training_data)
@@ -109,6 +143,9 @@ def test_duck_typed_bridge_passes_unconditional_mode_without_context_length() ->
     info = model.model_info()
     assert info["fit_report"]["diagnostics"]["mode"] == "unconditional"
     assert info["fit_report"]["diagnostics"]["context_length"] is None
+    assert info["fit_report"]["diagnostics"]["train_kind"] == "unconditional_examples"
+    assert info["fit_report"]["diagnostics"]["n_train_examples"] == 19
+    assert info["fit_report"]["diagnostics"]["n_context_examples"] == 0
 
     request = ScenarioRequest(
         context=np.zeros((0, 2), dtype=float),

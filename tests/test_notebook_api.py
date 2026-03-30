@@ -116,12 +116,12 @@ def _write_external_entrypoint_model(path: Path) -> None:
                     )
 
                 def sample(self, request):
-                    values = np.asarray(request.batch.values, dtype=float)
+                    values = np.asarray(request.series.values, dtype=float)
                     horizon = int(request.task.horizon or 1)
                     num_samples = int(request.num_samples)
-                    last = values[:, -1:, :] + self.shift
-                    tiled = np.repeat(last, horizon, axis=1)
-                    samples = np.repeat(tiled[:, None, :, :], num_samples, axis=1)
+                    last = values[-1:, :] + self.shift
+                    tiled = np.repeat(last, horizon, axis=0)
+                    samples = np.repeat(tiled[None, :, :], num_samples, axis=0)
                     return SimpleNamespace(
                         samples=samples,
                         diagnostics={"source": "temp_external_entrypoint"},

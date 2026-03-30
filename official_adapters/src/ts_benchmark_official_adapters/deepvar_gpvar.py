@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 import inspect
 from pathlib import Path
 import time
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
@@ -19,14 +19,14 @@ from ts_benchmark.model.model_contract import (
     ModelCapabilities,
     RuntimeContext,
     TaskSpec,
-    TSBatch,
+    TrainData,
 )
 
 from .contract_support import (
-    collect_training_batches,
-    coerce_values,
-    make_list_dataset_from_batches,
-    make_list_dataset_from_values,
+    coerce_forecast_training_series_collection,
+    coerce_series_values,
+    make_list_dataset_from_series,
+    make_list_dataset_from_series_collection,
     normalize_forecast_samples,
     require_forecast_task,
     runtime_device,
@@ -147,13 +147,13 @@ class _GluonMxGenerator:
         if request.constraints:
             raise ValueError("This adapter does not support generation constraints.")
 
-        values = coerce_values(request.batch)
+        values = coerce_series_values(request.series)
         if values.shape[-1] != self.target_dim:
             raise ValueError(
                 f"Request target_dim={values.shape[-1]} does not match trained target_dim={self.target_dim}."
             )
 
-        dataset_test = make_list_dataset_from_values(
+        dataset_test = make_list_dataset_from_series(
             values,
             freq=self.freq,
             install_extra=_GLUONTS_MX_EXTRA,
@@ -164,22 +164,16 @@ class _GluonMxGenerator:
             forecast_it = self.predictor.predict(dataset_test)
 
         forecasts = list(forecast_it)
-        if len(forecasts) != values.shape[0]:
+        if len(forecasts) != 1:
             raise ValueError(
-                f"Backend returned {len(forecasts)} forecasts for batch size {values.shape[0]}."
+                f"Backend returned {len(forecasts)} forecasts for a single request series."
             )
 
-        samples = np.stack(
-            [
-                normalize_forecast_samples(
-                    np.asarray(forecast.samples, dtype=float),
-                    num_samples=request.num_samples,
-                    horizon=horizon,
-                    target_dim=self.target_dim,
-                )
-                for forecast in forecasts
-            ],
-            axis=0,
+        samples = normalize_forecast_samples(
+            np.asarray(forecasts[0].samples, dtype=float),
+            num_samples=request.num_samples,
+            horizon=horizon,
+            target_dim=self.target_dim,
         )
         diagnostics = {
             "backend": self.backend,
@@ -246,11 +240,11 @@ class _BaseGluonMxEstimator:
 
     def fit(
         self,
-        train: Iterable[TSBatch],
+        train: TrainData,
         *,
         schema: DataSchema,
         task: TaskSpec,
-        valid: Iterable[TSBatch] | None = None,
+        valid: TrainData | None = None,
         runtime: RuntimeContext | None = None,
     ) -> tuple[_GluonMxGenerator, FitReport]:
         del valid
@@ -258,11 +252,16 @@ class _BaseGluonMxEstimator:
         horizon, context_length = require_forecast_task(task)
         target_dim = int(getattr(schema, "target_dim"))
         freq = getattr(schema, "freq", None) or "B"
-        batches = collect_training_batches(train, target_dim=target_dim)
+        train_series_collection = coerce_forecast_training_series_collection(
+            train,
+            target_dim=target_dim,
+            context_length=context_length,
+            horizon=horizon,
+        )
 
         estimator_cls = self._load_estimator_class()
-        dataset_train = make_list_dataset_from_batches(
-            batches,
+        dataset_train = make_list_dataset_from_series_collection(
+            train_series_collection,
             freq=freq,
             install_extra=_GLUONTS_MX_EXTRA,
         )
@@ -311,7 +310,7 @@ class _BaseGluonMxEstimator:
                 "freq": freq,
                 "runtime_device_hint": runtime_device(runtime),
                 "resolved_device": resolved_device,
-                "training_series_count": int(sum(batch.shape[0] for batch in batches)),
+                "training_series_count": len(train_series_collection),
             },
         )
         return generator, report

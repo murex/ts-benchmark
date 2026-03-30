@@ -60,7 +60,7 @@ class GaussianPluginModel(ScenarioModel):
 
     def fit(self, train_data: TrainingData) -> "GaussianPluginModel":
         train_data.validate()
-        x = np.asarray(train_data.returns, dtype=float)
+        x = np.asarray(train_data.concatenated_training_values(), dtype=float)
         self.mean_ = x.mean(axis=0)
         cov = np.cov(x, rowvar=False)
         cov = np.atleast_2d(cov) + self.ridge * np.eye(x.shape[1])

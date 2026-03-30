@@ -48,9 +48,12 @@ class StochasticVolatilityBootstrapModel(ScenarioModel):
 
         self.train_returns: np.ndarray | None = None
         self.residual_pool: np.ndarray | None = None
+        self.residual_paths: list[np.ndarray] | None = None
         self.long_run_var: np.ndarray | None = None
         self.mean_vector: np.ndarray | None = None
         self.n_assets: int | None = None
+        self._n_train_windows: int = 0
+        self._n_train_paths: int = 0
         self._runtime_device: str | None = None
         self._resolved_device: str | None = None
         self._residual_pool_torch: Any | None = None
@@ -73,10 +76,47 @@ class StochasticVolatilityBootstrapModel(ScenarioModel):
         x = np.asarray(train_data.returns, dtype=float)
         if x.ndim != 2:
             raise ValueError("train_returns must be shaped [time, n_assets].")
-        if len(x) < max(25, self.block_size):
-            raise ValueError("train_returns are too short for the stochastic-volatility bootstrap.")
 
         self._runtime_device = None if train_data.runtime is None else train_data.runtime.device
+        self.residual_paths = None
+        self._n_train_windows = 0
+        self._n_train_paths = 0
+
+        if train_data.forecast_windows is not None or train_data.path_collection is not None:
+            paths = train_data.benchmark_training_paths()
+            if any(len(path) < max(6, self.block_size) for path in paths):
+                raise ValueError(
+                    "training paths are too short for the stochastic-volatility bootstrap."
+                )
+            if train_data.forecast_windows is not None:
+                self._n_train_windows = len(paths)
+            else:
+                self._n_train_paths = len(paths)
+
+            sigma2_parts: list[np.ndarray] = []
+            residual_paths: list[np.ndarray] = []
+            for path in paths:
+                sigma2 = self._ewma_variances(path)
+                sigma = np.sqrt(np.maximum(sigma2, self.min_vol ** 2))
+                residuals = path / sigma
+                residuals = residuals - residuals.mean(axis=0, keepdims=True)
+                sigma2_parts.append(sigma2)
+                residual_paths.append(residuals[5:])
+
+            self.train_returns = np.concatenate(paths, axis=0)
+            self.residual_paths = residual_paths
+            self.residual_pool = np.concatenate(residual_paths, axis=0)
+            self.long_run_var = np.mean(np.concatenate(sigma2_parts, axis=0), axis=0)
+            self.mean_vector = np.mean(self.train_returns, axis=0)
+            self.n_assets = x.shape[1]
+            self._resolved_device = "cpu"
+            self._residual_pool_torch = None
+            self._long_run_var_torch = None
+            self._mean_vector_torch = None
+            return self
+
+        if len(x) < max(25, self.block_size):
+            raise ValueError("train_returns are too short for the stochastic-volatility bootstrap.")
 
         sigma2 = self._ewma_variances(x)
         sigma = np.sqrt(np.maximum(sigma2, self.min_vol ** 2))
@@ -114,6 +154,22 @@ class StochasticVolatilityBootstrapModel(ScenarioModel):
         return sigma2
 
     def _sample_residual_path(self, horizon: int, rng: np.random.Generator) -> np.ndarray:
+        if self.residual_paths is not None:
+            if self.block_size == 1:
+                out = np.empty((horizon, self.n_assets), dtype=float)
+                for step in range(horizon):
+                    path = self.residual_paths[int(rng.integers(0, len(self.residual_paths)))]
+                    out[step] = path[int(rng.integers(0, len(path)))]
+                return out
+
+            n_blocks = int(math.ceil(horizon / self.block_size))
+            blocks: list[np.ndarray] = []
+            for _ in range(n_blocks):
+                path = self.residual_paths[int(rng.integers(0, len(self.residual_paths)))]
+                start = int(rng.integers(0, len(path) - self.block_size + 1))
+                blocks.append(path[start : start + self.block_size])
+            return np.concatenate(blocks, axis=0)[:horizon]
+
         assert self.residual_pool is not None
         if self.block_size == 1:
             idx = rng.integers(0, len(self.residual_pool), size=horizon)
@@ -244,6 +300,8 @@ class StochasticVolatilityBootstrapModel(ScenarioModel):
             "name": self.name,
             "class": self.__class__.__name__,
             "block_size": self.block_size,
+            "n_train_windows": self._n_train_windows,
+            "n_train_paths": self._n_train_paths,
             "runtime_device": self._runtime_device,
             "resolved_device": self._resolved_device,
             "vol_of_vol": self.vol_of_vol,

@@ -219,12 +219,18 @@ def make_tabular_benchmark_dataset(
     train_size = int(protocol.train_size)
     test_size = int(protocol.test_size)
     generation_mode = str(protocol.generation_mode)
+    unconditional_train_data_mode = protocol.unconditional_train_data_mode
     context_length = int(protocol.context_length)
     horizon = int(protocol.horizon)
     eval_stride = int(protocol.eval_stride)
 
     if generation_mode == "forecast" and train_size <= context_length:
         raise ValueError("train_size must be larger than context_length.")
+    if generation_mode == "unconditional" and unconditional_train_data_mode == "path_dataset":
+        raise ValueError(
+            "Tabular datasets do not support unconditional_train_data_mode='path_dataset'. "
+            "Use 'windowed_path' instead."
+        )
     if test_size < horizon:
         raise ValueError("test_size must be at least horizon.")
     if eval_stride <= 0:

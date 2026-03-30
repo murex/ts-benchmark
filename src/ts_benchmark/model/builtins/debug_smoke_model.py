@@ -18,7 +18,7 @@ class DebugSmokeModel(ScenarioModel):
 
     def fit(self, train_data: TrainingData) -> "DebugSmokeModel":
         train_data.validate()
-        x = np.asarray(train_data.returns, dtype=float)
+        x = np.asarray(train_data.concatenated_training_values(), dtype=float)
         self._mean = x.mean(axis=0)
         self._std = x.std(axis=0, ddof=1) + 1e-6
         self._fit_log = [
@@ -26,6 +26,8 @@ class DebugSmokeModel(ScenarioModel):
                 "n_timesteps": float(x.shape[0]),
                 "n_assets": float(x.shape[1]),
                 "mean_abs_return": float(np.mean(np.abs(x))),
+                "n_train_windows": float(0 if train_data.forecast_windows is None else train_data.forecast_windows.contexts.shape[0]),
+                "n_train_paths": float(0 if train_data.path_collection is None else len(train_data.path_collection.paths)),
                 "scale": self.scale,
             }
         ]

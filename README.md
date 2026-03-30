@@ -256,6 +256,9 @@ The benchmark controls:
 - `horizon`
 - `eval_stride`
 - `train_stride`
+- `unconditional_train_data_mode`
+- `unconditional_train_window_length`
+- `unconditional_n_train_paths`
 
 These live in the top-level `protocol` block of the JSON config and are passed into models through the runtime Python contract.
 
@@ -270,6 +273,15 @@ Sequence models often turn a training history into many supervised windows.
 If each model extracts those windows differently, the benchmark stops being comparable.
 
 The optional benchmark-level `train_stride` field lets the benchmark define a common training-window extraction stride for sequence models. Models read that value from `train_data.protocol.train_stride` instead of choosing their own hidden default.
+
+For unconditional benchmarks, the benchmark also owns how training paths are constructed:
+
+- `unconditional_train_data_mode = "windowed_path"` means the benchmark cuts one long path into benchmark-owned training paths using `unconditional_train_window_length` and `train_stride`
+- `unconditional_train_data_mode = "path_dataset"` means the dataset already provides multiple independent training paths, with `unconditional_n_train_paths` recorded in protocol metadata
+
+Today `path_dataset` is implemented for synthetic datasets. External CSV/Parquet datasets use `windowed_path`.
+
+In both cases, the runtime normalizes unconditional training into a dataset of paths before handing it to public-contract models.
 
 ---
 
@@ -424,6 +436,9 @@ Interpretation:
 - `horizon`: forecast length generated at each evaluation origin
 - `eval_stride`: spacing between evaluation origins in the test region
 - `train_stride`: spacing used when the benchmark protocol is converted into supervised windows for training sequence models
+- `unconditional_train_data_mode`: unconditional training construction policy, either `windowed_path` or `path_dataset`
+- `unconditional_train_window_length`: path length used when `unconditional_train_data_mode = "windowed_path"`
+- `unconditional_n_train_paths`: number of benchmark-provided training paths when `unconditional_train_data_mode = "path_dataset"`
 - `n_model_scenarios`: number of scenarios requested from each model per evaluation window
 - `n_reference_scenarios`: number of reference scenarios drawn when the dataset provides a true generator
 
@@ -536,7 +551,7 @@ Direct entrypoint example:
 }
 ```
 
-Important: do **not** place `context_length`, `horizon`, `eval_stride`, `train_stride`, `train_size`, `test_size`, `n_model_scenarios`, or `n_reference_scenarios` inside `model.params`. Those belong to `protocol`.
+Important: do **not** place `context_length`, `horizon`, `eval_stride`, `train_stride`, `unconditional_train_data_mode`, `unconditional_train_window_length`, `unconditional_n_train_paths`, `train_size`, `test_size`, `n_model_scenarios`, or `n_reference_scenarios` inside `model.params`. Those belong to `protocol`.
 
 ### Choosing between `builtin`, `plugin`, and `entrypoint`
 
@@ -842,6 +857,9 @@ Saved benchmark tables include dataset metadata such as:
 - `horizon`
 - `eval_stride`
 - `train_stride`
+- `unconditional_train_data_mode`
+- `unconditional_train_window_length`
+- `unconditional_n_train_paths`
 
 This makes it much easier to compare runs across multiple datasets.
 
@@ -860,7 +878,9 @@ The key objects are:
 - `TSGeneratorEstimator`
 - `FittedTSGenerator`
 - `DataSchema`
-- `TSBatch`
+- `TSSeries`
+- `TrainExample`
+- `TrainData`
 - `TaskSpec`
 - `GenerationRequest`
 - `GenerationResult`
@@ -869,17 +889,19 @@ The key objects are:
 
 Important shape conventions:
 
-- `TSBatch.values`: `[batch, time, target_dim]`
-- `GenerationResult.samples`: `[batch, num_samples, generated_time, target_dim]`
+- `TSSeries.values`: `[time, target_dim]`
+- `GenerationResult.samples`: `[num_samples, generated_time, target_dim]`
 
 Important task semantics:
 
 - `task.mode = "forecast"`:
   - `task.horizon` is the forecast horizon
   - `task.context_length` is the intended conditioning history length
+  - `fit(train=...)` receives `TrainData(examples=...)` with `context` and `target`
 - `task.mode = "unconditional"`:
   - `task.horizon` is the desired generated sequence length
   - `task.context_length` is typically `None`
+  - `fit(train=...)` receives `TrainData(examples=...)` with `context=None`
 
 Minimal estimator/generator shape:
 
@@ -1038,14 +1060,13 @@ class MyGenerator:
         )
 
     def sample(self, request: GenerationRequest) -> GenerationResult:
-        values = np.asarray(request.batch.values, dtype=float)
-        batch_size = int(values.shape[0])
+        values = np.asarray(request.series.values, dtype=float)
         horizon = int(request.task.horizon or 1)
         rng = np.random.default_rng(None if request.runtime is None else request.runtime.seed)
         draws = rng.normal(
-            loc=self.mean[None, None, None, :],
-            scale=self.std[None, None, None, :],
-            size=(batch_size, request.num_samples, horizon, self.mean.shape[0]),
+            loc=self.mean[None, None, :],
+            scale=self.std[None, None, :],
+            size=(request.num_samples, horizon, self.mean.shape[0]),
         )
         return GenerationResult(samples=draws)
 
@@ -1056,8 +1077,25 @@ class MyGenerator:
 class MyEstimator:
     def fit(self, train, *, schema, task, valid=None, runtime=None):
         del schema, task, valid, runtime
-        batch = next(iter(train))
-        values = np.asarray(batch.values, dtype=float)
+        if getattr(task, "mode", None) == GenerationMode.UNCONDITIONAL:
+            values = np.concatenate(
+                [np.asarray(example.target.values, dtype=float) for example in train.examples],
+                axis=0,
+            )
+        else:
+            values = np.concatenate(
+                [
+                    np.concatenate(
+                        [
+                            np.asarray(example.context.values, dtype=float),
+                            np.asarray(example.target.values, dtype=float),
+                        ],
+                        axis=0,
+                    )
+                    for example in train.examples
+                ],
+                axis=0,
+            )
         x = values.reshape(-1, values.shape[-1])
         generator = MyGenerator(mean=x.mean(axis=0), std=x.std(axis=0, ddof=1) + 1e-6)
         return generator, FitReport(train_metrics={"n_rows": float(x.shape[0])})
@@ -1081,7 +1119,7 @@ mode = task.mode
 horizon = task.horizon
 context_length = task.context_length
 num_samples = request.num_samples
-history = request.batch.values
+history = request.series.values
 ```
 
 Do **not** make benchmark-owned task settings a second hidden model config.
@@ -1309,6 +1347,9 @@ For fair comparisons, keep these choices fixed across models unless the whole ex
 - `horizon`
 - `eval_stride`
 - `train_stride`
+- `unconditional_train_data_mode`
+- `unconditional_train_window_length`
+- `unconditional_n_train_paths`
 - scenario counts
 - preprocessing pipeline
 - benchmark seed
@@ -1529,6 +1570,9 @@ At minimum, run metadata includes:
 - `horizon`
 - `eval_stride`
 - `train_stride`
+- `unconditional_train_data_mode`
+- `unconditional_train_window_length`
+- `unconditional_n_train_paths`
 
 ---
 
