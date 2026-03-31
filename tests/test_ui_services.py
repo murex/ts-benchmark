@@ -43,14 +43,17 @@ def _valid_benchmark_config(model_names: list[str]) -> dict[str, object]:
         "metadata": {},
     }
     config["benchmark"]["protocol"] = {
-        "train_size": 100,
-        "test_size": 20,
-        "context_length": 8,
+        "kind": "forecast",
         "horizon": 2,
-        "eval_stride": 5,
-        "train_stride": 1,
         "n_model_scenarios": 8,
         "n_reference_scenarios": 16,
+        "forecast": {
+            "train_size": 100,
+            "test_size": 20,
+            "context_length": 8,
+            "eval_stride": 5,
+            "train_stride": 1,
+        },
     }
     config["benchmark"]["models"] = [
         {
@@ -702,14 +705,17 @@ def test_load_run_artifacts_surfaces_dataset_rebuild_error(tmp_path) -> None:
               "metadata": {}
             },
             "protocol": {
-              "train_size": 20,
-              "test_size": 5,
-              "context_length": 4,
+              "kind": "forecast",
               "horizon": 2,
-              "eval_stride": 1,
-              "train_stride": 1,
               "n_model_scenarios": 4,
-              "n_reference_scenarios": 8
+              "n_reference_scenarios": 8,
+              "forecast": {
+                "train_size": 20,
+                "test_size": 5,
+                "context_length": 4,
+                "eval_stride": 1,
+                "train_stride": 1
+              }
             },
             "metrics": [{"name": "crps"}],
             "models": [
@@ -779,7 +785,7 @@ def test_benchmark_catalog_run_loads_run_lab(monkeypatch, tmp_path: Path) -> Non
     config["benchmark"]["name"] = "catalog_run"
     saved_path = configs.save_benchmark_definition(config, benchmark_dir=tmp_path)
 
-    monkeypatch.setattr(config_studio, "load_saved_benchmark", lambda name: config)
+    monkeypatch.setattr(config_studio, "load_config_dict", lambda path: config)
     monkeypatch.setattr(config_studio, "build_effective_config", lambda payload: payload)
     monkeypatch.setattr(config_studio, "set_current_config", lambda value: captured.__setitem__("config", value))
     monkeypatch.setattr(config_studio, "set_current_config_path", lambda value: captured.__setitem__("config_path", value))
@@ -799,6 +805,28 @@ def test_benchmark_catalog_run_loads_run_lab(monkeypatch, tmp_path: Path) -> Non
     assert captured["page"] == "Run Lab"
     assert captured["config"]["benchmark"]["name"] == "catalog_run"
     assert captured["run"] is None
+
+
+def test_save_current_benchmark_persists_to_local_catalog(monkeypatch, tmp_path: Path) -> None:
+    import ts_benchmark.ui.pages.config_studio as config_studio
+
+    captured: dict[str, object] = {}
+    config = configs.default_config_dict()
+    config["benchmark"]["name"] = "saved_from_editor"
+
+    monkeypatch.setattr(config_studio, "BENCHMARK_CATALOG_DIR", tmp_path)
+    monkeypatch.setattr(config_studio, "build_effective_config", lambda payload: payload)
+    monkeypatch.setattr(config_studio, "get_current_config_path", lambda: None)
+    monkeypatch.setattr(config_studio, "set_current_config", lambda value: captured.__setitem__("config", value))
+    monkeypatch.setattr(config_studio, "set_current_config_path", lambda value: captured.__setitem__("path", value))
+    monkeypatch.setattr(config_studio, "set_effective_config", lambda value: captured.__setitem__("effective", value))
+
+    saved_path = config_studio._save_current_benchmark(config)
+
+    assert saved_path == tmp_path / "saved_from_editor.json"
+    assert saved_path.exists()
+    assert captured["path"] == saved_path
+    assert json.loads(saved_path.read_text(encoding="utf-8"))["benchmark"]["name"] == "saved_from_editor"
 
 
 def test_model_catalog_page_import_smoke() -> None:

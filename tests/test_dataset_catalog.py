@@ -67,7 +67,15 @@ def test_delete_saved_dataset_is_blocked_when_used_by_benchmark(tmp_path: Path) 
                 "benchmark": {
                     "name": "benchmark_a",
                     "dataset": {"name": "shared_dataset"},
-                    "protocol": {"train_size": 10, "test_size": 2, "context_length": 2, "horizon": 1},
+                    "protocol": {
+                        "kind": "forecast",
+                        "horizon": 1,
+                        "forecast": {
+                            "train_size": 10,
+                            "test_size": 2,
+                            "context_length": 2,
+                        },
+                    },
                     "models": [
                         {
                             "name": "historical",

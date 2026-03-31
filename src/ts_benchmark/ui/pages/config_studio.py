@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from .. import BENCHMARK_CATALOG_DIR
 from ts_benchmark.metrics import available_metric_names, resolve_metric_configs
 
 from ..schema_forms import (
@@ -17,10 +18,11 @@ from ..schema_forms import (
 )
 from ..services.configs import (
     build_effective_config,
+    delete_saved_benchmark,
     default_config_dict,
     list_saved_benchmarks,
     load_config_dict,
-    load_saved_benchmark,
+    save_benchmark_definition,
     validate_effective_config,
 )
 from ..services.datasets import list_saved_datasets, load_saved_dataset
@@ -145,6 +147,15 @@ def _open_benchmark(config: dict[str, Any], path: Path | None) -> None:
     _queue_navigation("Benchmark", "Definition")
 
 
+def _is_local_saved_benchmark_path(path: Path | None) -> bool:
+    if path is None:
+        return False
+    try:
+        return path.expanduser().resolve().parent == BENCHMARK_CATALOG_DIR.resolve()
+    except Exception:
+        return False
+
+
 def _new_benchmark() -> None:
     _open_benchmark(default_config_dict(), None)
     _set_flash("success", "Started a new benchmark.")
@@ -211,8 +222,14 @@ def _catalog_badges(row: dict[str, Any]) -> str:
 
 
 def _clone_catalog_benchmark(row: dict[str, Any]) -> None:
-    config = load_saved_benchmark(str(row["name"]))
-    existing_names = {str(item["name"]) for item in list_saved_benchmarks()}
+    config = load_config_dict(Path(row["path"]))
+    existing_names = {
+        str(item["name"])
+        for item in list_saved_benchmarks()
+    } | {
+        str(item["name"])
+        for item in list_saved_benchmarks(benchmark_dir=BENCHMARK_CATALOG_DIR)
+    }
     benchmark = config.setdefault("benchmark", {})
     benchmark["name"] = _cloned_benchmark_name(str(benchmark.get("name") or row["name"]), existing_names)
     _open_benchmark(config, None)
@@ -220,7 +237,7 @@ def _clone_catalog_benchmark(row: dict[str, Any]) -> None:
 
 
 def _run_catalog_benchmark(row: dict[str, Any]) -> None:
-    config = load_saved_benchmark(str(row["name"]))
+    config = load_config_dict(Path(row["path"]))
     set_current_config(config)
     set_current_config_path(Path(row["path"]))
     set_effective_config(build_effective_config(config))
@@ -231,26 +248,43 @@ def _run_catalog_benchmark(row: dict[str, Any]) -> None:
     _set_flash("success", f"Prepared benchmark '{row['name']}' in Run Lab.")
 
 
-def _render_catalog() -> None:
-    st.subheader("Catalog")
-    action_cols = st.columns([1, 3])
-    if action_cols[0].button("New benchmark", use_container_width=True):
-        _new_benchmark()
+def _save_current_benchmark(current: dict[str, Any]) -> Path:
+    previous_path = get_current_config_path()
+    saved_path = save_benchmark_definition(current, benchmark_dir=BENCHMARK_CATALOG_DIR)
+    set_current_config(current)
+    set_current_config_path(saved_path)
+    set_effective_config(build_effective_config(current))
+    if previous_path is not None and previous_path.resolve() != saved_path.resolve():
+        _set_flash(
+            "success",
+            f"Saved benchmark '{current['benchmark']['name']}' as a new local benchmark.",
+        )
+    else:
+        _set_flash("success", f"Saved benchmark '{current['benchmark']['name']}'.")
+    return saved_path
 
-    uploaded = st.file_uploader("Import benchmark JSON", type=["json"], key=BENCHMARKS_UPLOAD_KEY)
-    if uploaded is not None:
-        _open_benchmark(load_config_dict(uploaded.getvalue().decode("utf-8")), None)
-        _set_flash("success", f"Imported benchmark '{uploaded.name}'.")
-        st.rerun()
 
-    st.subheader("Official benchmarks")
-    rows = list_saved_benchmarks()
+def _delete_current_saved_benchmark(current_path: Path) -> Path:
+    deleted_path = delete_saved_benchmark(current_path.stem, benchmark_dir=BENCHMARK_CATALOG_DIR)
+    set_current_config_path(None)
+    _set_flash("success", f"Deleted saved benchmark '{deleted_path.stem}'. Session copy remains open.")
+    return deleted_path
+
+
+def _delete_catalog_benchmark(row: dict[str, Any]) -> None:
+    deleted_path = delete_saved_benchmark(Path(row["path"]).stem, benchmark_dir=BENCHMARK_CATALOG_DIR)
+    current_path = get_current_config_path()
+    if current_path is not None and current_path.resolve() == deleted_path.resolve():
+        set_current_config_path(None)
+    _set_flash("success", f"Deleted saved benchmark '{row['name']}'.")
+
+
+def _render_catalog_rows(rows: list[dict[str, Any]], *, allow_delete: bool) -> None:
     if not rows:
-        st.info("No official benchmarks are available.")
+        st.info("No benchmarks are available in this section.")
         return
-
     for row in rows:
-        cols = st.columns([2.1, 2.9, 1.3, 0.9, 0.9, 0.9])
+        cols = st.columns([2.1, 2.9, 1.3, 0.9, 0.9, 0.9, 0.9] if allow_delete else [2.1, 2.9, 1.3, 0.9, 0.9, 0.9])
         with cols[0]:
             st.markdown(f"**{row['name']}**")
             st.markdown(_catalog_badges(row))
@@ -266,21 +300,53 @@ def _render_catalog() -> None:
                 if not results_updated_at
                 else f"Results updated: {results_updated_at}"
             )
-        if cols[3].button("Open", key=f"benchmarks.catalog.open.{row['name']}", use_container_width=True):
-            _open_benchmark(load_saved_benchmark(str(row["name"])), Path(row["path"]))
+        if cols[3].button("Open", key=f"benchmarks.catalog.open.{row['path']}", use_container_width=True):
+            _open_benchmark(load_config_dict(Path(row["path"])), Path(row["path"]))
             _set_flash("success", f"Opened benchmark '{row['name']}'.")
             st.rerun()
-        if cols[4].button("Clone", key=f"benchmarks.catalog.clone.{row['name']}", use_container_width=True):
+        if cols[4].button("Clone", key=f"benchmarks.catalog.clone.{row['path']}", use_container_width=True):
             _clone_catalog_benchmark(row)
             st.rerun()
         if cols[5].button(
             "Run",
-            key=f"benchmarks.catalog.run.{row['name']}",
+            key=f"benchmarks.catalog.run.{row['path']}",
             use_container_width=True,
         ):
             _run_catalog_benchmark(row)
             st.rerun()
+        if allow_delete and cols[6].button(
+            "Delete",
+            key=f"benchmarks.catalog.delete.{row['path']}",
+            use_container_width=True,
+        ):
+            _delete_catalog_benchmark(row)
+            st.rerun()
         st.divider()
+
+
+def _render_catalog() -> None:
+    st.subheader("Catalog")
+    action_cols = st.columns([1, 3])
+    if action_cols[0].button("New benchmark", use_container_width=True):
+        _new_benchmark()
+
+    uploaded = st.file_uploader("Import benchmark JSON", type=["json"], key=BENCHMARKS_UPLOAD_KEY)
+    if uploaded is not None:
+        _open_benchmark(load_config_dict(uploaded.getvalue().decode("utf-8")), None)
+        _set_flash("success", f"Imported benchmark '{uploaded.name}'.")
+        st.rerun()
+
+    st.subheader("Official benchmarks")
+    _render_catalog_rows(list_saved_benchmarks(), allow_delete=False)
+
+    st.subheader("Saved benchmarks")
+    _render_catalog_rows(
+        sorted(
+            list_saved_benchmarks(benchmark_dir=BENCHMARK_CATALOG_DIR),
+            key=lambda row: str(row.get("name") or "").lower(),
+        ),
+        allow_delete=True,
+    )
 
 
 def _render_definition(current: dict[str, Any]) -> None:
@@ -423,7 +489,9 @@ def _render_metrics(current: dict[str, Any]) -> None:
 
 
 def _render_benchmark_editor(current: dict[str, Any]) -> None:
-    action_cols = st.columns([1, 1, 3])
+    current_path = get_current_config_path()
+    can_delete_saved = _is_local_saved_benchmark_path(current_path)
+    action_cols = st.columns([1, 1, 1, 1, 3] if can_delete_saved else [1, 1, 1, 3])
     if action_cols[0].button("Validate benchmark", use_container_width=True):
         effective = build_effective_config(current)
         ok, message = validate_effective_config(effective)
@@ -433,12 +501,23 @@ def _render_benchmark_editor(current: dict[str, Any]) -> None:
         else:
             _set_flash("error", f"Validation failed: {message}")
         st.rerun()
-    if action_cols[1].button("Open Run Lab", use_container_width=True):
+    if action_cols[1].button("Save benchmark", use_container_width=True):
+        _save_current_benchmark(current)
+        st.rerun()
+    if action_cols[2].button("Open Run Lab", use_container_width=True):
         set_page("Run Lab")
         st.rerun()
+    if can_delete_saved and action_cols[3].button("Delete saved", use_container_width=True):
+        _delete_current_saved_benchmark(current_path)
+        st.rerun()
 
-    current_path = get_current_config_path()
-    st.caption("Source benchmark" if current_path is not None else "Session benchmark: not saved by the library")
+    st.caption(
+        "Saved local benchmark"
+        if _is_local_saved_benchmark_path(current_path)
+        else "Source benchmark"
+        if current_path is not None
+        else "Session benchmark: not saved yet"
+    )
     if current_path is not None:
         st.code(str(current_path), language="text")
 
