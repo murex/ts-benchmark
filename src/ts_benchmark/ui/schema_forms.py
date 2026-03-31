@@ -16,8 +16,107 @@ from .services.model_catalog import describe_catalog_model_entry
 PROTOCOL_MODE_KEY = "benchmarks.protocol.generation_mode"
 PROTOCOL_CONTEXT_LENGTH_KEY = "benchmarks.protocol.context_length"
 PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY = "benchmarks.protocol.unconditional_train_data_mode"
-PROTOCOL_UNCONDITIONAL_WINDOW_KEY = "benchmarks.protocol.unconditional_train_window_length"
 PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY = "benchmarks.protocol.unconditional_n_train_paths"
+PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY = "benchmarks.protocol.unconditional_n_eval_paths"
+PROTOCOL_REGION_TRAIN_SIZE_KEY = "benchmarks.protocol.train_size_region"
+PROTOCOL_REGION_TEST_SIZE_KEY = "benchmarks.protocol.test_size_region"
+
+
+def _dataset_supports_reference_scenarios(config: dict[str, Any]) -> bool:
+    provider = (
+        config.get("benchmark", {})
+        .get("dataset", {})
+        .get("provider", {})
+    )
+    return str(provider.get("kind") or "").strip().lower() == "synthetic"
+
+
+def _count_sliding_windows(total_length: int, window_length: int, stride: int) -> int:
+    if total_length < 1 or window_length < 1 or stride < 1 or total_length < window_length:
+        return 0
+    return 1 + (total_length - window_length) // stride
+
+
+def _protocol_summary_lines(
+    protocol: dict[str, Any],
+    *,
+    dataset_supports_reference_scenarios: bool,
+) -> list[str]:
+    kind = str(protocol.get("kind") or "forecast")
+    horizon = int(protocol.get("horizon", 0) or 0)
+    n_model_scenarios = int(protocol.get("n_model_scenarios", 0) or 0)
+    evaluation_unit = "evaluation window"
+
+    lines: list[str] = []
+    if kind == "forecast":
+        branch = dict(protocol.get("forecast") or {})
+        train_size = int(branch.get("train_size", 0) or 0)
+        test_size = int(branch.get("test_size", 0) or 0)
+        context_length = int(branch.get("context_length", 0) or 0)
+        train_stride = int(branch.get("train_stride", 1) or 1)
+        eval_stride = int(branch.get("eval_stride", 1) or 1)
+        n_train_examples = _count_sliding_windows(
+            train_size,
+            context_length + horizon,
+            train_stride,
+        )
+        n_eval_windows = _count_sliding_windows(test_size, horizon, eval_stride)
+        lines.append(
+            f"Fit on {n_train_examples} forecast examples: benchmark-owned past ending in context {context_length} with target {horizon}."
+        )
+        lines.append(f"Evaluate on {n_eval_windows} forecast origins in the held-out future region.")
+    elif kind == "unconditional_windowed":
+        branch = dict(protocol.get("unconditional_windowed") or {})
+        train_size = int(branch.get("train_size", 0) or 0)
+        test_size = int(branch.get("test_size", 0) or 0)
+        train_stride = int(branch.get("train_stride", 1) or 1)
+        eval_stride = int(branch.get("eval_stride", 1) or 1)
+        n_train_paths = _count_sliding_windows(train_size, horizon, train_stride)
+        lines.append(
+            f"Fit on {n_train_paths} unconditional training paths of length {horizon}."
+        )
+        n_eval_windows = _count_sliding_windows(test_size, horizon, eval_stride)
+        lines.append(
+            f"Evaluate on {n_eval_windows} unconditional origins with horizon {horizon}."
+        )
+    else:
+        branch = dict(protocol.get("unconditional_path_dataset") or {})
+        evaluation_unit = "realized path"
+        n_train_paths = int(branch.get("n_train_paths", 0) or 0)
+        n_realized_paths = int(branch.get("n_realized_paths", 0) or 0)
+        lines.append(
+            f"Fit on {n_train_paths} benchmark-provided unconditional training paths of length {horizon}."
+        )
+        lines.append(
+            f"Evaluate on {n_realized_paths} held-out unconditional realized paths of length {horizon}."
+        )
+    lines.append(f"Request {n_model_scenarios} model scenarios per {evaluation_unit}.")
+    if dataset_supports_reference_scenarios:
+        n_reference_scenarios = int(protocol.get("n_reference_scenarios", 0) or 0)
+        lines.append(
+            f"Compare against {n_reference_scenarios} reference scenarios per {evaluation_unit}."
+        )
+    return lines
+
+
+def _default_region_lengths(protocol: dict[str, Any]) -> tuple[int, int]:
+    kind = str(protocol.get("kind") or "forecast")
+    if kind == "unconditional_path_dataset":
+        return 120, 40
+    if kind == "forecast":
+        branch = dict(protocol.get("forecast") or {})
+    else:
+        branch = dict(protocol.get("unconditional_windowed") or {})
+    return int(branch.get("train_size", 120) or 120), int(branch.get("test_size", 40) or 40)
+
+
+def _initial_mode_and_path_construction(protocol: dict[str, Any]) -> tuple[str, str]:
+    kind = str(protocol.get("kind") or "forecast")
+    if kind == "forecast":
+        return "forecast", "windowed_path"
+    if kind == "unconditional_path_dataset":
+        return "unconditional", "path_dataset"
+    return "unconditional", "windowed_path"
 
 
 def _normalize_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
@@ -49,64 +148,59 @@ def render_config_general(config: dict[str, Any]) -> None:
 
 def render_protocol_form(config: dict[str, Any]) -> None:
     protocol = config.setdefault("benchmark", {}).setdefault("protocol", {})
-    initial_mode = str(protocol.get("generation_mode") or "forecast")
-    initial_context_length = int(protocol.get("context_length", 12 if initial_mode == "forecast" else 0))
-    raw_unconditional_data_mode = protocol.get("unconditional_train_data_mode")
-    initial_unconditional_data_mode = (
-        "windowed_path"
-        if raw_unconditional_data_mode in {None, ""}
-        else str(raw_unconditional_data_mode)
+    dataset_supports_reference_scenarios = _dataset_supports_reference_scenarios(config)
+    initial_mode, initial_unconditional_data_mode = _initial_mode_and_path_construction(protocol)
+    initial_context_length = int(
+        dict(protocol.get("forecast") or {}).get("context_length", 12 if initial_mode == "forecast" else 0)
     )
-    current_train_size = int(protocol.get("train_size", 120))
-    raw_unconditional_window_length = protocol.get("unconditional_train_window_length")
-    initial_unconditional_window_length = (
-        min(current_train_size, max(int(protocol.get("horizon", 4)), 16))
-        if raw_unconditional_window_length in {None, ""}
-        else int(raw_unconditional_window_length)
-    )
-    raw_unconditional_path_count = protocol.get("unconditional_n_train_paths")
+    initial_region_train_size, initial_region_test_size = _default_region_lengths(protocol)
+    raw_unconditional_path_count = dict(protocol.get("unconditional_path_dataset") or {}).get("n_train_paths")
     initial_unconditional_path_count = (
         8
         if raw_unconditional_path_count in {None, ""}
         else int(raw_unconditional_path_count)
     )
+    raw_unconditional_eval_path_count = dict(protocol.get("unconditional_path_dataset") or {}).get("n_realized_paths")
+    initial_unconditional_eval_path_count = (
+        4
+        if raw_unconditional_eval_path_count in {None, ""}
+        else int(raw_unconditional_eval_path_count)
+    )
     st.session_state.setdefault(PROTOCOL_MODE_KEY, initial_mode)
     st.session_state.setdefault(PROTOCOL_CONTEXT_LENGTH_KEY, initial_context_length)
     st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, initial_unconditional_data_mode)
-    st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_WINDOW_KEY, initial_unconditional_window_length)
     st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, initial_unconditional_path_count)
+    st.session_state.setdefault(PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY, initial_unconditional_eval_path_count)
+    st.session_state.setdefault(PROTOCOL_REGION_TRAIN_SIZE_KEY, initial_region_train_size)
+    st.session_state.setdefault(PROTOCOL_REGION_TEST_SIZE_KEY, initial_region_test_size)
 
-    cols = st.columns(3)
-    with cols[0]:
-        previous_mode = str(st.session_state.get(PROTOCOL_MODE_KEY, initial_mode))
+    st.markdown("#### Task")
+    previous_mode = str(st.session_state.get(PROTOCOL_MODE_KEY, initial_mode))
+    task_cols = st.columns(2)
+    with task_cols[0]:
         protocol["generation_mode"] = st.selectbox(
             "Generation mode",
             options=["forecast", "unconditional"],
-            index=0 if previous_mode == "forecast" else 1,
             key=PROTOCOL_MODE_KEY,
         )
-        if protocol["generation_mode"] != previous_mode:
-            if protocol["generation_mode"] == "unconditional":
-                st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = 0
-                if str(st.session_state.get(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, "")) not in {
-                    "windowed_path",
-                    "path_dataset",
-                }:
-                    st.session_state[PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY] = initial_unconditional_data_mode
-                if int(st.session_state.get(PROTOCOL_UNCONDITIONAL_WINDOW_KEY, 0)) < 1:
-                    st.session_state[PROTOCOL_UNCONDITIONAL_WINDOW_KEY] = initial_unconditional_window_length
-                if int(st.session_state.get(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, 0)) < 1:
-                    st.session_state[PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY] = initial_unconditional_path_count
-            elif int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, 0)) < 1:
-                fallback_context_length = initial_context_length if initial_context_length >= 1 else 12
-                st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = fallback_context_length
-    with cols[1]:
-        protocol["train_size"] = int(st.number_input("Train size", min_value=1, value=int(protocol.get("train_size", 120)), step=1))
-    with cols[2]:
-        protocol["test_size"] = int(st.number_input("Test size", min_value=1, value=int(protocol.get("test_size", 40)), step=1))
-    cols = st.columns(3)
-    with cols[0]:
-        if protocol["generation_mode"] == "forecast":
+    if protocol["generation_mode"] != previous_mode:
+        if protocol["generation_mode"] == "unconditional":
+            st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = 0
+            if str(st.session_state.get(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, "")) not in {
+                "windowed_path",
+                "path_dataset",
+            }:
+                st.session_state[PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY] = initial_unconditional_data_mode
+            if int(st.session_state.get(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, 0)) < 1:
+                st.session_state[PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY] = initial_unconditional_path_count
+            if int(st.session_state.get(PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY, 0)) < 1:
+                st.session_state[PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY] = initial_unconditional_eval_path_count
+        elif int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, 0)) < 1:
+            fallback_context_length = initial_context_length if initial_context_length >= 1 else 12
+            st.session_state[PROTOCOL_CONTEXT_LENGTH_KEY] = fallback_context_length
+    if protocol["generation_mode"] == "forecast":
+        cols = st.columns(2)
+        with cols[0]:
             default_context_length = 12
             normalized_context_length = int(st.session_state.get(PROTOCOL_CONTEXT_LENGTH_KEY, default_context_length))
             if normalized_context_length < 1:
@@ -116,104 +210,254 @@ def render_protocol_form(config: dict[str, Any]) -> None:
                 st.number_input(
                     "Context length",
                     min_value=1,
-                    value=normalized_context_length,
                     step=1,
                     key=PROTOCOL_CONTEXT_LENGTH_KEY,
                 )
             )
-            protocol["unconditional_train_data_mode"] = None
-            protocol["unconditional_train_window_length"] = None
-            protocol["unconditional_n_train_paths"] = None
-        else:
-            protocol["context_length"] = 0
-            protocol["unconditional_train_data_mode"] = st.selectbox(
-                "Train data mode",
+        with cols[1]:
+            protocol["horizon"] = int(
+                st.number_input("Horizon", min_value=1, value=int(protocol.get("horizon", 4)), step=1)
+            )
+        protocol["kind"] = "forecast"
+    else:
+        with task_cols[1]:
+            selected_unconditional_data_mode = st.selectbox(
+                "Path construction",
                 options=["windowed_path", "path_dataset"],
-                index=0
-                if str(st.session_state.get(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, initial_unconditional_data_mode))
-                == "windowed_path"
-                else 1,
                 key=PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY,
+                format_func=lambda value: "Window one path" if value == "windowed_path" else "Use path dataset",
             )
-            if protocol["unconditional_train_data_mode"] == "windowed_path":
-                train_size = int(protocol.get("train_size", current_train_size))
-                normalized_window_length = int(
-                    st.session_state.get(PROTOCOL_UNCONDITIONAL_WINDOW_KEY, initial_unconditional_window_length)
-                )
-                if normalized_window_length < 1 or normalized_window_length > train_size:
-                    normalized_window_length = min(train_size, initial_unconditional_window_length)
-                    st.session_state[PROTOCOL_UNCONDITIONAL_WINDOW_KEY] = normalized_window_length
-                protocol["unconditional_train_window_length"] = int(
-                    st.number_input(
-                        "Train window length",
-                        min_value=1,
-                        max_value=train_size,
-                        value=normalized_window_length,
-                        step=1,
-                        key=PROTOCOL_UNCONDITIONAL_WINDOW_KEY,
-                    )
-                )
-                protocol["unconditional_n_train_paths"] = None
-            else:
-                normalized_path_count = int(
-                    st.session_state.get(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, initial_unconditional_path_count)
-                )
-                if normalized_path_count < 1:
-                    normalized_path_count = initial_unconditional_path_count
-                    st.session_state[PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY] = normalized_path_count
-                protocol["unconditional_n_train_paths"] = int(
-                    st.number_input(
-                        "Training paths",
-                        min_value=1,
-                        value=normalized_path_count,
-                        step=1,
-                        key=PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY,
-                    )
-                )
-                protocol["unconditional_train_window_length"] = None
-    cols = st.columns(3)
-    with cols[0]:
-        horizon_label = "Horizon" if protocol["generation_mode"] == "forecast" else "Sample length"
-        protocol["horizon"] = int(st.number_input(horizon_label, min_value=1, value=int(protocol.get("horizon", 4)), step=1))
-    with cols[1]:
-        protocol["eval_stride"] = int(st.number_input("Eval stride", min_value=1, value=int(protocol.get("eval_stride", 10)), step=1))
-    with cols[2]:
-        train_stride_label = "Train stride"
-        train_stride_disabled = False
-        if protocol["generation_mode"] == "unconditional":
-            if protocol.get("unconditional_train_data_mode") == "windowed_path":
-                train_stride_label = "Train window stride"
-            else:
-                train_stride_label = "Train stride (unused)"
-                train_stride_disabled = True
-        protocol["train_stride"] = int(
-            st.number_input(
-                train_stride_label,
-                min_value=1,
-                value=int(protocol.get("train_stride", 1)),
-                step=1,
-                disabled=train_stride_disabled,
+        cols = st.columns(1)
+        with cols[0]:
+            protocol["horizon"] = int(
+                st.number_input("Horizon", min_value=1, value=int(protocol.get("horizon", 4)), step=1)
             )
+        protocol["kind"] = (
+            "unconditional_path_dataset"
+            if selected_unconditional_data_mode == "path_dataset"
+            else "unconditional_windowed"
         )
-    cols = st.columns(2)
-    with cols[0]:
+    if protocol["generation_mode"] == "forecast":
+        st.caption(
+            "The benchmark fits on forecast examples that carry full benchmark-owned past plus the conditioning context, and evaluates sampled futures on held-out origins."
+        )
+    else:
+        st.caption("The benchmark fits on unconditional paths and evaluates sampled futures at the configured horizon.")
+    selected_unconditional_data_mode = (
+        str(st.session_state.get(PROTOCOL_UNCONDITIONAL_DATA_MODE_KEY, initial_unconditional_data_mode))
+        if protocol["generation_mode"] == "unconditional"
+        else None
+    )
+    forecast_block = dict(protocol.get("forecast") or {})
+    unconditional_windowed_block = dict(protocol.get("unconditional_windowed") or {})
+    unconditional_path_dataset_block = dict(protocol.get("unconditional_path_dataset") or {})
+
+    st.markdown("#### Data Split")
+    unconditional_path_dataset = protocol["kind"] == "unconditional_path_dataset"
+    if unconditional_path_dataset:
+        cols = st.columns(2)
+        with cols[0]:
+            normalized_path_count = int(
+                st.session_state.get(PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY, initial_unconditional_path_count)
+            )
+            if normalized_path_count < 1:
+                normalized_path_count = initial_unconditional_path_count
+                st.session_state[PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY] = normalized_path_count
+            unconditional_path_dataset_block["n_train_paths"] = int(
+                st.number_input(
+                    "Training paths",
+                    min_value=1,
+                    step=1,
+                    key=PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY,
+                )
+            )
+        with cols[1]:
+            normalized_eval_path_count = int(
+                st.session_state.get(
+                    PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY,
+                    initial_unconditional_eval_path_count,
+                )
+            )
+            if normalized_eval_path_count < 1:
+                normalized_eval_path_count = initial_unconditional_eval_path_count
+                st.session_state[PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY] = normalized_eval_path_count
+            unconditional_path_dataset_block["n_realized_paths"] = int(
+                st.number_input(
+                    "Held-out realized paths",
+                    min_value=1,
+                    step=1,
+                    key=PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY,
+                )
+            )
+        st.caption("Path-dataset mode does not use a temporal split. Horizon sets both training and held-out realized path length.")
+    else:
+        cols = st.columns(2)
+        with cols[0]:
+            normalized_train_size = int(st.session_state.get(PROTOCOL_REGION_TRAIN_SIZE_KEY, initial_region_train_size))
+            if normalized_train_size < 1:
+                normalized_train_size = initial_region_train_size
+                st.session_state[PROTOCOL_REGION_TRAIN_SIZE_KEY] = normalized_train_size
+            train_size = int(
+                st.number_input(
+                    "Training region length",
+                    min_value=1,
+                    step=1,
+                    key=PROTOCOL_REGION_TRAIN_SIZE_KEY,
+                )
+            )
+        with cols[1]:
+            normalized_test_size = int(st.session_state.get(PROTOCOL_REGION_TEST_SIZE_KEY, initial_region_test_size))
+            if normalized_test_size < 1:
+                normalized_test_size = initial_region_test_size
+                st.session_state[PROTOCOL_REGION_TEST_SIZE_KEY] = normalized_test_size
+            test_size = int(
+                st.number_input(
+                    "Held-out future region length",
+                    min_value=1,
+                    step=1,
+                    key=PROTOCOL_REGION_TEST_SIZE_KEY,
+                )
+            )
+        if protocol["kind"] == "forecast":
+            forecast_block["train_size"] = train_size
+            forecast_block["test_size"] = test_size
+        else:
+            unconditional_windowed_block["train_size"] = train_size
+            unconditional_windowed_block["test_size"] = test_size
+        st.caption("Training examples are built from the training region. Realized futures come from the held-out future region.")
+
+    if protocol["generation_mode"] == "forecast":
+        st.markdown("#### Training Construction")
+        cols = st.columns(1)
+        with cols[0]:
+            forecast_block["train_stride"] = int(
+                st.number_input(
+                    "Training window stride",
+                    min_value=1,
+                    value=int(forecast_block.get("train_stride", 1)),
+                    step=1,
+                )
+            )
+        forecast_block["context_length"] = int(protocol["context_length"])
+        st.caption(
+            "Forecast fit examples come from the training region using the benchmark-owned training stride, and each one carries the full past up to its target origin."
+        )
+    elif not unconditional_path_dataset:
+        st.markdown("#### Training Construction")
+        cols = st.columns(1)
+        with cols[0]:
+            unconditional_windowed_block["train_stride"] = int(
+                st.number_input(
+                    "Training path stride",
+                    min_value=1,
+                    value=int(unconditional_windowed_block.get("train_stride", 1)),
+                    step=1,
+                )
+            )
+        st.caption("Horizon sets the unconditional training path length in windowed-path mode.")
+
+    st.markdown("#### Evaluation")
+    if protocol["generation_mode"] == "unconditional":
+        unconditional_path_dataset = protocol["kind"] == "unconditional_path_dataset"
+        cols = st.columns(
+            2 if unconditional_path_dataset and dataset_supports_reference_scenarios else 1 if unconditional_path_dataset else 3 if dataset_supports_reference_scenarios else 2
+        )
+        if unconditional_path_dataset:
+            scenario_label = "Model scenarios per realized path"
+            reference_label = "Reference scenarios per realized path"
+            model_scenarios_col = 0
+            reference_scenarios_col = 1
+        else:
+            scenario_label = "Model scenarios per evaluation window"
+            reference_label = "Reference scenarios per evaluation window"
+            with cols[0]:
+                unconditional_windowed_block["eval_stride"] = int(
+                    st.number_input(
+                        "Evaluation origin stride",
+                        min_value=1,
+                        value=int(unconditional_windowed_block.get("eval_stride", 10)),
+                        step=1,
+                    )
+                )
+            model_scenarios_col = 1
+            reference_scenarios_col = 2
+    else:
+        cols = st.columns(3 if dataset_supports_reference_scenarios else 2)
+        eval_stride_col = 0
+        model_scenarios_col = 1
+        reference_scenarios_col = 2
+        scenario_label = "Model scenarios per evaluation window"
+        reference_label = "Reference scenarios per evaluation window"
+        with cols[eval_stride_col]:
+            forecast_block["eval_stride"] = int(
+                st.number_input(
+                    "Evaluation origin stride",
+                    min_value=1,
+                    value=int(forecast_block.get("eval_stride", 10)),
+                    step=1,
+                )
+            )
+    with cols[model_scenarios_col]:
         protocol["n_model_scenarios"] = int(
             st.number_input(
-                "Model scenarios",
+                scenario_label,
                 min_value=1,
                 value=int(protocol.get("n_model_scenarios", 64)),
                 step=1,
             )
         )
-    with cols[1]:
-        protocol["n_reference_scenarios"] = int(
-            st.number_input(
-                "Reference scenarios",
-                min_value=1,
-                value=int(protocol.get("n_reference_scenarios", 128)),
-                step=1,
+    if dataset_supports_reference_scenarios:
+        with cols[reference_scenarios_col]:
+            protocol["n_reference_scenarios"] = int(
+                st.number_input(
+                    reference_label,
+                    min_value=1,
+                    value=int(protocol.get("n_reference_scenarios", 128)),
+                    step=1,
+                )
             )
-        )
+    else:
+        protocol["n_reference_scenarios"] = int(protocol.get("n_reference_scenarios", 128))
+        st.caption("Reference scenarios are only used for synthetic datasets.")
+    if protocol["generation_mode"] == "forecast":
+        st.caption("Contexts may overlap the tail of the training region. Only realized futures are strictly held out.")
+    elif unconditional_path_dataset:
+        st.caption("Path-dataset evaluation compares generated samples against independent held-out realized paths, so origin stride is not used.")
+    else:
+        st.caption("Horizon controls the unconditional path length used at evaluation time.")
+
+    for legacy_key in (
+        "generation_mode",
+        "context_length",
+        "train_size",
+        "test_size",
+        "eval_stride",
+        "train_stride",
+        "unconditional_train_data_mode",
+        "unconditional_train_window_length",
+        "unconditional_n_train_paths",
+        "unconditional_n_eval_paths",
+    ):
+        protocol.pop(legacy_key, None)
+
+    if protocol["kind"] == "forecast":
+        protocol["forecast"] = forecast_block
+        protocol.pop("unconditional_windowed", None)
+        protocol.pop("unconditional_path_dataset", None)
+    elif protocol["kind"] == "unconditional_windowed":
+        protocol["unconditional_windowed"] = unconditional_windowed_block
+        protocol.pop("forecast", None)
+        protocol.pop("unconditional_path_dataset", None)
+    else:
+        protocol["unconditional_path_dataset"] = unconditional_path_dataset_block
+        protocol.pop("forecast", None)
+        protocol.pop("unconditional_windowed", None)
+
+    summary_lines = _protocol_summary_lines(
+        protocol,
+        dataset_supports_reference_scenarios=dataset_supports_reference_scenarios,
+    )
+    st.info("\n".join(summary_lines))
 
 
 def render_benchmark_form(config: dict[str, Any], *, device_options: list[str]) -> None:

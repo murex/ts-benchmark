@@ -236,7 +236,6 @@ def render() -> None:
     selected_model_names = st.multiselect(
         "Models to run",
         options=model_names,
-        default=model_names,
         key=RUN_LAB_MODEL_SELECTION_KEY,
     )
 
