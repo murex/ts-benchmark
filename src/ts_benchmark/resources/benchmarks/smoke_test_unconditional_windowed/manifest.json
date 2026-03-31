@@ -1,0 +1,6 @@
+{
+  "benchmark_id": "smoke_test_unconditional_windowed",
+  "display_name": "smoke_test_unconditional_windowed",
+  "description": "Quick synthetic unconditional smoke benchmark using benchmark-windowed paths from one training history, with built-in baselines.",
+  "has_baseline": false
+}

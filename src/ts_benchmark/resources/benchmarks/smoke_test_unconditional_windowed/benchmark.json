@@ -1,0 +1,140 @@
+{
+  "version": "1.0",
+  "benchmark": {
+    "name": "smoke test unconditional windowed",
+    "description": "Quick synthetic unconditional smoke benchmark for six series using benchmark-windowed paths from one training history.",
+    "dataset": {
+      "name": "synthetic_basic_6_series",
+      "description": "Basic synthetic daily return panel for six series with constant volatility, no regime changes, no leverage effects, and near-Gaussian shocks.",
+      "provider": {
+        "kind": "synthetic",
+        "config": {
+          "generator": "regime_switching_factor_sv",
+          "params": {
+            "n_assets": 6,
+            "factor_loadings": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            "idio_scales": [0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+            "regime_drifts": [0.0003, 0.0003],
+            "transition_matrix": [[1.0, 0.0], [0.0, 1.0]],
+            "market_log_var_means": [-9.2, -9.2],
+            "idio_log_var_means": [
+              [-9.5, -9.5, -9.5, -9.5, -9.5, -9.5],
+              [-9.5, -9.5, -9.5, -9.5, -9.5, -9.5]
+            ],
+            "market_phi": 0.985,
+            "idio_phi": 0.965,
+            "market_vol_of_vol": 0.0,
+            "idio_vol_of_vol": 0.0,
+            "market_leverage": 0.0,
+            "idio_leverage": 0.0,
+            "student_df": 1000.0,
+            "seed": 7
+          }
+        }
+      },
+      "schema": {
+        "layout": "tensor",
+        "frequency": "B"
+      },
+      "semantics": {
+        "target_kind": "returns"
+      },
+      "metadata": {
+        "n_assets": 6,
+        "profile": "basic"
+      }
+    },
+    "protocol": {
+      "kind": "unconditional_windowed",
+      "horizon": 12,
+      "n_model_scenarios": 8,
+      "n_reference_scenarios": 16,
+      "unconditional_windowed": {
+        "train_size": 120,
+        "test_size": 24,
+        "eval_stride": 4,
+        "train_stride": 1
+      }
+    },
+    "metrics": [
+      {"name": "crps"},
+      {"name": "energy_score"},
+      {"name": "predictive_mean_mse"},
+      {"name": "coverage_90_error"},
+      {"name": "mean_error"},
+      {"name": "volatility_error"},
+      {"name": "skew_error"},
+      {"name": "excess_kurtosis_error"},
+      {"name": "cross_correlation_error"},
+      {"name": "autocorrelation_error"},
+      {"name": "squared_autocorrelation_error"},
+      {"name": "var_95_error"},
+      {"name": "es_95_error"},
+      {"name": "max_drawdown_error"},
+      {"name": "mmd_rbf"}
+    ],
+    "models": [
+      {
+        "name": "historical_bootstrap",
+        "description": "Historical bootstrap baseline.",
+        "reference": {
+          "kind": "builtin",
+          "value": "historical_bootstrap"
+        },
+        "params": {
+          "block_size": 5
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      },
+      {
+        "name": "historical_sv_bootstrap",
+        "description": "Historical stochastic-volatility bootstrap baseline.",
+        "reference": {
+          "kind": "builtin",
+          "value": "stochastic_volatility_bootstrap"
+        },
+        "params": {
+          "ewma_lambda": 0.97,
+          "block_size": 5,
+          "vol_of_vol": 0.1,
+          "long_run_blend": 0.02,
+          "min_vol": 0.0001
+        },
+        "pipeline": {
+          "name": "raw",
+          "steps": []
+        }
+      }
+    ]
+  },
+  "run": {
+    "seed": 21,
+    "execution": {
+      "scheduler": "auto",
+      "device": null,
+      "model_execution": {
+        "mode": "inprocess"
+      }
+    },
+    "tracking": {
+      "mlflow": {}
+    },
+    "output": {
+      "keep_scenarios": false,
+      "save_scenarios": false,
+      "save_model_info": true,
+      "save_summary": true
+    }
+  },
+  "diagnostics": {
+    "save_model_debug_artifacts": true,
+    "save_distribution_summary": true,
+    "save_per_window_metrics": true,
+    "functional_smoke": {
+      "enabled": true
+    }
+  }
+}

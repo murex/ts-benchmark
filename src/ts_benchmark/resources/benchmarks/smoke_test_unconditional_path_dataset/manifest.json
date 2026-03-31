@@ -1,0 +1,6 @@
+{
+  "benchmark_id": "smoke_test_unconditional_path_dataset",
+  "display_name": "smoke_test_unconditional_path_dataset",
+  "description": "Quick synthetic unconditional smoke benchmark using independent training and realized paths, with built-in baselines.",
+  "has_baseline": false
+}
