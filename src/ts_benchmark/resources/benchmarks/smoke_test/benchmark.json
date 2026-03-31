@@ -45,14 +45,17 @@
       }
     },
     "protocol": {
-      "train_size": 120,
-      "test_size": 24,
-      "context_length": 8,
+      "kind": "forecast",
       "horizon": 2,
-      "eval_stride": 4,
-      "train_stride": 1,
       "n_model_scenarios": 8,
-      "n_reference_scenarios": 16
+      "n_reference_scenarios": 16,
+      "forecast": {
+        "train_size": 120,
+        "test_size": 24,
+        "context_length": 8,
+        "eval_stride": 4,
+        "train_stride": 1
+      }
     },
     "metrics": [
       {"name": "crps"},

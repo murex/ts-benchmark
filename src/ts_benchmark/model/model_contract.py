@@ -86,11 +86,19 @@ class TrainExample:
 
     `target` is always the model's supervised training target.
 
+    `history` is:
+    - present in forecast mode and shaped `[history_time, target_dim]`
+    - the full benchmark-owned past available up to the forecast origin
+    - omitted in unconditional mode
+
     `context` is:
     - present in forecast mode and shaped `[context_length, target_dim]`
+    - the conditioning suffix exposed at generation time
+    - a trailing slice of `history`
     - omitted in unconditional mode
     """
 
+    history: Optional[TSSeries]
     context: Optional[TSSeries]
     target: TSSeries
 
@@ -104,8 +112,9 @@ class TrainData:
     model-facing contract.
 
     Semantics:
-    - `FORECAST`: every example defines both `context` and `target`
-    - `UNCONDITIONAL`: every example defines `context=None` and `target`
+    - `FORECAST`: every example defines `history`, `context`, and `target`
+    - `UNCONDITIONAL`: every example defines `history=None`, `context=None`,
+      and `target`
     """
 
     examples: Sequence[TrainExample]
@@ -224,8 +233,9 @@ class TSGeneratorEstimator(Protocol):
     fitted generator plus an optional fit summary.
 
     `train.examples` depends on the task family:
-    - `FORECAST`: each example defines both `context` and `target`
-    - `UNCONDITIONAL`: each example defines `context=None` and `target`
+    - `FORECAST`: each example defines `history`, `context`, and `target`
+    - `UNCONDITIONAL`: each example defines `history=None`, `context=None`,
+      and `target`
     """
 
     def fit(

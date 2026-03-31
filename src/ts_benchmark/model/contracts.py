@@ -34,8 +34,13 @@ class ForecastWindowCollection:
     `source_kind` is either:
     - `single_path`: windows extracted from one realized training path
     - `path_dataset`: windows extracted from multiple independent training paths
+
+    `histories[i]` contains the full benchmark-owned past up to the target
+    origin for window `i`. `contexts[i]` is the trailing conditioning suffix
+    exposed at generation time, and `targets[i]` is the supervised horizon.
     """
 
+    histories: list[np.ndarray]
     contexts: np.ndarray
     targets: np.ndarray
     source_kind: str
@@ -52,12 +57,15 @@ class ForecastWindowCollection:
             raise ValueError(
                 "source_kind must be either 'single_path' or 'path_dataset'."
             )
+        normalized_histories: list[np.ndarray] = []
         contexts = np.asarray(self.contexts, dtype=float)
         targets = np.asarray(self.targets, dtype=float)
         if contexts.ndim != 3:
             raise ValueError("contexts must be shaped [n_windows, context_length, n_assets].")
         if targets.ndim != 3:
             raise ValueError("targets must be shaped [n_windows, horizon, n_assets].")
+        if len(self.histories) != contexts.shape[0]:
+            raise ValueError("histories and contexts must have the same number of windows.")
         if contexts.shape[0] != targets.shape[0]:
             raise ValueError("contexts and targets must have the same number of windows.")
         if contexts.shape[0] < 1:
@@ -81,12 +89,36 @@ class ForecastWindowCollection:
             raise ValueError(
                 f"forecast targets have horizon {targets.shape[1]} but expected horizon={expected_horizon}."
             )
+        for index, history in enumerate(self.histories):
+            h = np.asarray(history, dtype=float)
+            if h.ndim != 2:
+                raise ValueError(f"histories[{index}] must be shaped [history_length, n_assets].")
+            if h.shape[0] < contexts.shape[1]:
+                raise ValueError(
+                    f"histories[{index}] has length {h.shape[0]} but must be at least context_length={contexts.shape[1]}."
+                )
+            if h.shape[1] != contexts.shape[2]:
+                raise ValueError(
+                    f"histories[{index}] has n_assets={h.shape[1]} but expected {contexts.shape[2]}."
+                )
+            if expected_n_assets is not None and h.shape[1] != expected_n_assets:
+                raise ValueError(
+                    f"histories[{index}] has n_assets={h.shape[1]} but expected {expected_n_assets}."
+                )
+            if not np.isfinite(h).all():
+                raise ValueError(f"histories[{index}] contains non-finite values.")
+            if not np.allclose(h[-contexts.shape[1] :], contexts[index]):
+                raise ValueError(
+                    f"histories[{index}] must end with the matching benchmark context window."
+                )
+            normalized_histories.append(h)
         if not np.isfinite(contexts).all():
             raise ValueError("forecast contexts contain non-finite values.")
         if not np.isfinite(targets).all():
             raise ValueError("forecast targets contain non-finite values.")
         if self.stride < 1:
             raise ValueError("forecast window stride must be positive.")
+        self.histories = normalized_histories
         self.contexts = contexts
         self.targets = targets
 
@@ -158,7 +190,8 @@ class TrainingData:
 
     `returns` is always the benchmark's realized training history.
     `forecast_windows` is populated in forecast mode when the benchmark
-    normalizes training into benchmark-owned supervised windows.
+    normalizes training into benchmark-owned supervised examples carrying
+    full past, conditioning context, and target horizon.
     `path_collection` is additionally populated in unconditional mode when
     the benchmark normalizes training into a dataset of independent paths.
     """

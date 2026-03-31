@@ -38,6 +38,10 @@ class PreprocessedScenarioModel(ScenarioModel):
         transformed_forecast_windows = None
         if train_data.forecast_windows is not None:
             transformed_forecast_windows = ForecastWindowCollection(
+                histories=[
+                    self.pipeline.transform(history)
+                    for history in train_data.forecast_windows.histories
+                ],
                 contexts=np.asarray(
                     [self.pipeline.transform(context) for context in train_data.forecast_windows.contexts],
                     dtype=float,

@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from ..benchmark import BenchmarkConfig, dump_benchmark_config, load_benchmark_config, resolve_benchmark_reference
+from ..benchmark.protocol import protocol_config_payload
 from ..dataset.definition import DatasetConfig, DatasetProviderConfig
 from ..dataset.factory import build_dataset
 from ..dataset.providers.tabular import load_returns_frame
@@ -54,6 +55,8 @@ RESULTS_METADATA_COLUMNS = {
     "dataset_source",
     "device",
     "has_reference_scenarios",
+    "protocol_kind",
+    "path_construction",
     "train_size",
     "test_size",
     "generation_mode",
@@ -61,9 +64,8 @@ RESULTS_METADATA_COLUMNS = {
     "horizon",
     "eval_stride",
     "train_stride",
-    "unconditional_train_data_mode",
-    "unconditional_train_window_length",
-    "unconditional_n_train_paths",
+    "n_train_paths",
+    "n_realized_paths",
     "n_model_scenarios",
     "n_reference_scenarios",
     "execution_mode",
@@ -1080,7 +1082,7 @@ def _dataset_info_payload(config: BenchmarkConfig, dataset: object, *, split: st
         "asset_names": list(getattr(dataset, "asset_names")),
         "n_rows": int(_dataset_values_for_split(dataset, split).shape[0]),
         "n_assets": int(_dataset_values_for_split(dataset, split).shape[1]),
-        "protocol": to_jsonable(config.protocol),
+        "protocol": protocol_config_payload(config.protocol),
         "provider": {
             "kind": str(provider.kind),
             "config": to_jsonable(provider.config),
@@ -1088,10 +1090,18 @@ def _dataset_info_payload(config: BenchmarkConfig, dataset: object, *, split: st
         "metadata": to_jsonable(getattr(dataset, "metadata")),
     }
     if provider.kind == "synthetic":
-        payload["synthetic"] = {
+        synthetic_payload = {
             "generator": provider.config.get("generator"),
             "params": to_jsonable(provider.config.get("params") or {}),
-            "n_points_to_generate": int(config.protocol.train_size) + int(config.protocol.test_size),
+        }
+        if getattr(config.protocol, "kind", "") == "unconditional_path_dataset":
+            synthetic_payload["n_training_paths_to_generate"] = int(config.protocol.n_train_paths)
+            synthetic_payload["n_realized_paths_to_generate"] = int(config.protocol.n_realized_paths)
+            synthetic_payload["points_per_path"] = int(config.protocol.horizon)
+        else:
+            synthetic_payload["n_points_to_generate"] = int(config.protocol.train_size) + int(config.protocol.test_size)
+        payload["synthetic"] = {
+            **synthetic_payload,
         }
     return payload
 

@@ -106,6 +106,66 @@ def coerce_forecast_training_series_collection(
     return series_collection, resolved_context_length
 
 
+def coerce_forecast_history_series_collection(
+    train_like: object,
+    *,
+    horizon: int,
+    target_dim: int,
+) -> tuple[list[np.ndarray], int]:
+    examples = getattr(train_like, "examples", None)
+    if examples is None:
+        raise ValueError("forecast adapters expect train.examples in TrainData.")
+    series_collection: list[np.ndarray] = []
+    resolved_context_length: int | None = None
+    for index, example in enumerate(examples):
+        history_like = getattr(example, "history", None)
+        context_like = getattr(example, "context", None)
+        target_like = getattr(example, "target", None)
+        if history_like is None or context_like is None or target_like is None:
+            raise ValueError(
+                f"train.examples[{index}] must define history, context, and target series."
+            )
+        history_values = coerce_training_series_values(history_like, target_dim=target_dim)
+        context_values = coerce_series_values(context_like)
+        target_values = coerce_series_values(target_like)
+        if context_values.shape[-1] != target_dim:
+            raise ValueError(
+                f"train.examples[{index}].context target_dim={context_values.shape[-1]} "
+                f"does not match schema.target_dim={target_dim}."
+            )
+        if target_values.shape[-1] != target_dim:
+            raise ValueError(
+                f"train.examples[{index}].target target_dim={target_values.shape[-1]} "
+                f"does not match schema.target_dim={target_dim}."
+            )
+        if history_values.shape[0] < context_values.shape[0]:
+            raise ValueError(
+                f"train.examples[{index}].history has length {history_values.shape[0]} "
+                f"but must be at least context_length={context_values.shape[0]}."
+            )
+        if not np.allclose(history_values[-context_values.shape[0] :], context_values):
+            raise ValueError(
+                f"train.examples[{index}].history must end with the matching context window."
+            )
+        if resolved_context_length is None:
+            resolved_context_length = int(context_values.shape[0])
+        elif context_values.shape[0] != resolved_context_length:
+            raise ValueError(
+                f"train.examples[{index}].context has length {context_values.shape[0]} "
+                f"but expected context_length={resolved_context_length}."
+            )
+        if target_values.shape[0] != horizon:
+            raise ValueError(
+                f"train.examples[{index}].target has length {target_values.shape[0]} "
+                f"but expected horizon={horizon}."
+            )
+        series_collection.append(np.concatenate([history_values, target_values], axis=0))
+    if not series_collection:
+        raise ValueError("forecast training data must contain at least one example.")
+    assert resolved_context_length is not None
+    return series_collection, resolved_context_length
+
+
 def make_list_dataset_from_series_collection(
     values_collection: list[np.ndarray],
     *,

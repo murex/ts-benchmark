@@ -93,15 +93,17 @@ def _training_payload(
         return ExternalTrainData(
             examples=[
                 ExternalTrainExample(
+                    history=ExternalSeries(values=np.asarray(history, dtype=float)),
                     context=ExternalSeries(values=np.asarray(context, dtype=float)),
                     target=ExternalSeries(values=np.asarray(target, dtype=float)),
                 )
-                for context, target in zip(
+                for history, context, target in zip(
+                    train_data.forecast_windows.histories,
                     train_data.forecast_windows.contexts,
                     train_data.forecast_windows.targets,
                     strict=True,
                 )
-            ]
+            ],
         )
     if train_data.path_collection is None:
         raise ValueError(
@@ -110,6 +112,7 @@ def _training_payload(
     return ExternalTrainData(
         examples=[
             ExternalTrainExample(
+                history=None,
                 context=None,
                 target=ExternalSeries(values=np.asarray(path, dtype=float)),
             )

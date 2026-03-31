@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ts_benchmark.benchmark import Protocol
+from ts_benchmark.benchmark import ForecastProtocol
 from ts_benchmark.dataset import RegimeSwitchingFactorSVGenerator
 from ts_benchmark.metrics import select_metric_configs_for_run
 from ts_benchmark.model import (
@@ -21,7 +21,7 @@ from ts_benchmark.run.evaluator import ScenarioBenchmark
 
 def main() -> None:
     generator = RegimeSwitchingFactorSVGenerator(n_assets=6, seed=11)
-    protocol = Protocol(
+    protocol = ForecastProtocol(
         train_size=1200,
         test_size=260,
         context_length=60,

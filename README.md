@@ -14,14 +14,11 @@ That makes runs easier to reproduce and makes model comparisons much fairer.
 
 - synthetic regime-switching factor stochastic-volatility scenario generation
 - external dataset support from **CSV** and **Parquet** files
-- benchmark-owned protocol settings:
-  - `train_size`
-  - `test_size`
-  - `generation_mode`
-  - `context_length`
-  - `horizon`
-  - `eval_stride`
-  - `train_stride`
+- benchmark-owned branched protocol settings:
+  - common: `kind`, `horizon`, `n_model_scenarios`, `n_reference_scenarios`
+  - forecast: `forecast.train_size`, `forecast.test_size`, `forecast.context_length`, `forecast.eval_stride`, `forecast.train_stride`
+  - unconditional windowed: `unconditional_windowed.train_size`, `unconditional_windowed.test_size`, `unconditional_windowed.eval_stride`, `unconditional_windowed.train_stride`
+  - unconditional path dataset: `unconditional_path_dataset.n_train_paths`, `unconditional_path_dataset.n_realized_paths`
 - explicit preprocessing pipelines per model
 - built-in models:
   - historical bootstrap
@@ -249,16 +246,14 @@ timegrad_env = provision_adapter_venv(
 
 The benchmark controls:
 
-- `train_size`
-- `test_size`
-- `generation_mode`
-- `context_length`
+- `protocol.kind`
 - `horizon`
-- `eval_stride`
-- `train_stride`
-- `unconditional_train_data_mode`
-- `unconditional_train_window_length`
-- `unconditional_n_train_paths`
+- `n_model_scenarios`
+- `n_reference_scenarios`
+- branch-specific fields inside:
+  - `forecast`
+  - `unconditional_windowed`
+  - `unconditional_path_dataset`
 
 These live in the top-level `protocol` block of the JSON config and are passed into models through the runtime Python contract.
 
@@ -276,8 +271,13 @@ The optional benchmark-level `train_stride` field lets the benchmark define a co
 
 For unconditional benchmarks, the benchmark also owns how training paths are constructed:
 
-- `unconditional_train_data_mode = "windowed_path"` means the benchmark cuts one long path into benchmark-owned training paths using `unconditional_train_window_length` and `train_stride`
-- `unconditional_train_data_mode = "path_dataset"` means the dataset already provides multiple independent training paths, with `unconditional_n_train_paths` recorded in protocol metadata
+- `kind = "unconditional_windowed"` means the benchmark cuts one long path into benchmark-owned training paths using `horizon` as the path length and `unconditional_windowed.train_stride`
+- `kind = "unconditional_path_dataset"` means the dataset already provides multiple independent training paths, with `unconditional_path_dataset.n_train_paths` training paths and `unconditional_path_dataset.n_realized_paths` held-out realized paths
+
+For the default unconditional benchmark task, path length is fixed:
+
+- `unconditional_windowed`: training path length equals `horizon`
+- `unconditional_path_dataset`: training path length and held-out realized path length equal `horizon`
 
 Today `path_dataset` is implemented for synthetic datasets. External CSV/Parquet datasets use `windowed_path`.
 
@@ -415,14 +415,17 @@ The `protocol` block is benchmark-owned and common to all models in the run:
 {
   "benchmark": {
     "protocol": {
-      "train_size": 180,
-      "test_size": 80,
-      "context_length": 12,
+      "kind": "forecast",
       "horizon": 4,
-      "eval_stride": 20,
-      "train_stride": 4,
       "n_model_scenarios": 16,
-      "n_reference_scenarios": 32
+      "n_reference_scenarios": 32,
+      "forecast": {
+        "train_size": 180,
+        "test_size": 80,
+        "context_length": 12,
+        "eval_stride": 20,
+        "train_stride": 4
+      }
     }
   }
 }
@@ -430,15 +433,19 @@ The `protocol` block is benchmark-owned and common to all models in the run:
 
 Interpretation:
 
-- `train_size`: number of rows used for model fitting
-- `test_size`: number of rows reserved for rolling evaluation
-- `context_length`: length of the conditioning history
-- `horizon`: forecast length generated at each evaluation origin
-- `eval_stride`: spacing between evaluation origins in the test region
-- `train_stride`: spacing used when the benchmark protocol is converted into supervised windows for training sequence models
-- `unconditional_train_data_mode`: unconditional training construction policy, either `windowed_path` or `path_dataset`
-- `unconditional_train_window_length`: path length used when `unconditional_train_data_mode = "windowed_path"`
-- `unconditional_n_train_paths`: number of benchmark-provided training paths when `unconditional_train_data_mode = "path_dataset"`
+- `kind`: selects the protocol branch, one of `forecast`, `unconditional_windowed`, or `unconditional_path_dataset`
+- `horizon`: number of points each model must generate per evaluation case
+- `forecast.train_size`: number of rows used for model fitting in forecast mode
+- `forecast.test_size`: number of rows reserved for rolling evaluation in forecast mode
+- `forecast.context_length`: length of the conditioning history
+- `forecast.eval_stride`: spacing between evaluation origins in the held-out future region
+- `forecast.train_stride`: spacing used when the benchmark converts the training region into supervised forecast examples
+- `unconditional_windowed.train_size`: number of rows used for unconditional fitting when the benchmark windows one long path
+- `unconditional_windowed.test_size`: length of the held-out future region used for unconditional rolling evaluation
+- `unconditional_windowed.eval_stride`: spacing between unconditional evaluation origins
+- `unconditional_windowed.train_stride`: spacing used when the benchmark cuts unconditional training paths from one long path
+- `unconditional_path_dataset.n_train_paths`: number of benchmark-provided training paths
+- `unconditional_path_dataset.n_realized_paths`: number of held-out realized paths used at evaluation
 - `n_model_scenarios`: number of scenarios requested from each model per evaluation window
 - `n_reference_scenarios`: number of reference scenarios drawn when the dataset provides a true generator
 
@@ -551,7 +558,7 @@ Direct entrypoint example:
 }
 ```
 
-Important: do **not** place `context_length`, `horizon`, `eval_stride`, `train_stride`, `unconditional_train_data_mode`, `unconditional_train_window_length`, `unconditional_n_train_paths`, `train_size`, `test_size`, `n_model_scenarios`, or `n_reference_scenarios` inside `model.params`. Those belong to `protocol`.
+Important: do **not** place `kind`, `horizon`, `n_model_scenarios`, `n_reference_scenarios`, or branch-owned protocol fields such as `forecast.context_length`, `forecast.train_size`, `unconditional_windowed.train_stride`, or `unconditional_path_dataset.n_train_paths` inside `model.params`. Those belong to `protocol`.
 
 ### Choosing between `builtin`, `plugin`, and `entrypoint`
 
@@ -810,8 +817,9 @@ Given the loaded return matrix, the benchmark:
 1. takes the first `train_size` rows as the fit sample
 2. takes the next `test_size` rows as the evaluation region
 3. rolls forecast origins through the evaluation region using `eval_stride`
-4. extracts `context_length` rows before each origin as conditioning context
-5. compares generated `horizon`-step scenarios to the realized future path
+4. exposes `context_length` rows before each origin as the conditioning context
+5. builds benchmark-owned forecast fit examples whose `history` contains all past rows up to the target origin and whose `context` is the trailing conditioning suffix
+6. compares generated `horizon`-step scenarios to the realized future path
 
 This means the benchmark defines the evaluation windows once and all models are tested on the same windows.
 
@@ -852,14 +860,15 @@ Saved benchmark tables include dataset metadata such as:
 - `dataset_source`
 - `device`
 - `has_reference_scenarios`
+- `protocol_kind`
 - `generation_mode`
+- `path_construction`
 - `context_length`
 - `horizon`
 - `eval_stride`
 - `train_stride`
-- `unconditional_train_data_mode`
-- `unconditional_train_window_length`
-- `unconditional_n_train_paths`
+- `n_train_paths`
+- `n_realized_paths`
 
 This makes it much easier to compare runs across multiple datasets.
 
@@ -896,10 +905,10 @@ Important task semantics:
 
 - `task.mode = "forecast"`:
   - `task.horizon` is the forecast horizon
-  - `fit(train=...)` receives `TrainData(examples=...)` with `context` and `target`
+  - `fit(train=...)` receives `TrainData(examples=...)` with `history`, `context`, and `target`
 - `task.mode = "unconditional"`:
   - `task.horizon` is the desired generated sequence length
-  - `fit(train=...)` receives `TrainData(examples=...)` with `context=None`
+  - `fit(train=...)` receives `TrainData(examples=...)` with `history=None` and `context=None`
 
 Minimal estimator/generator shape:
 
@@ -1085,7 +1094,7 @@ class MyEstimator:
                 [
                     np.concatenate(
                         [
-                            np.asarray(example.context.values, dtype=float),
+                            np.asarray(example.history.values, dtype=float),
                             np.asarray(example.target.values, dtype=float),
                         ],
                         axis=0,
@@ -1337,15 +1346,10 @@ Outputs include:
 For fair comparisons, keep these choices fixed across models unless the whole experiment is explicitly about varying them:
 
 - dataset
-- `train_size`
-- `test_size`
-- `context_length`
+- `protocol.kind`
 - `horizon`
-- `eval_stride`
-- `train_stride`
-- `unconditional_train_data_mode`
-- `unconditional_train_window_length`
-- `unconditional_n_train_paths`
+- forecast branch fields such as `forecast.train_size`, `forecast.test_size`, `forecast.context_length`, `forecast.eval_stride`, `forecast.train_stride`
+- unconditional branch fields such as `unconditional_windowed.train_size`, `unconditional_windowed.test_size`, `unconditional_windowed.eval_stride`, `unconditional_windowed.train_stride`, `unconditional_path_dataset.n_train_paths`, `unconditional_path_dataset.n_realized_paths`
 - scenario counts
 - preprocessing pipeline
 - benchmark seed
@@ -1562,13 +1566,13 @@ At minimum, run metadata includes:
 - dataset source
 - selected device
 - whether reference scenarios exist
+- `protocol_kind`
 - `context_length`
 - `horizon`
 - `eval_stride`
 - `train_stride`
-- `unconditional_train_data_mode`
-- `unconditional_train_window_length`
-- `unconditional_n_train_paths`
+- `path_construction`
+- `n_train_paths`
 
 ---
 

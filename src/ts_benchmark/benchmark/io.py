@@ -31,21 +31,23 @@ from ..run.definition import (
 from ..serialization import to_jsonable
 from ..utils import JsonObject, StringMap
 from .definition import BenchmarkConfig
-from .protocol import Protocol
+from .protocol import Protocol, protocol_config_payload, protocol_from_mapping
 
 BENCHMARK_OWNED_PROTOCOL_FIELDS = {
+    "kind",
+    "horizon",
+    "n_model_scenarios",
+    "n_reference_scenarios",
+    "forecast",
+    "unconditional_windowed",
+    "unconditional_path_dataset",
     "train_size",
     "test_size",
     "context_length",
-    "horizon",
-    "generation_mode",
     "eval_stride",
     "train_stride",
-    "unconditional_train_data_mode",
-    "unconditional_train_window_length",
-    "unconditional_n_train_paths",
-    "n_model_scenarios",
-    "n_reference_scenarios",
+    "n_train_paths",
+    "n_realized_paths",
 }
 
 
@@ -121,15 +123,10 @@ def validate_benchmark_config(config_dict: dict[str, Any]) -> None:
         raise ValueError(f"Unsupported dataset.provider.kind '{source}'.")
 
     protocol_block = _as_mapping(benchmark_block.get("protocol"), field_name="benchmark.protocol")
-    generation_mode = str(protocol_block.get("generation_mode") or "forecast")
-    unconditional_train_data_mode = protocol_block.get("unconditional_train_data_mode")
-    if (
-        generation_mode == "unconditional"
-        and unconditional_train_data_mode == "path_dataset"
-        and source != "synthetic"
-    ):
+    protocol = protocol_from_mapping(protocol_block)
+    if protocol.kind == "unconditional_path_dataset" and source != "synthetic":
         raise ValueError(
-            "unconditional_train_data_mode='path_dataset' is currently supported only for synthetic datasets."
+            "protocol.kind='unconditional_path_dataset' is currently supported only for synthetic datasets."
         )
 
     metrics_block = benchmark_block.get("metrics")
@@ -417,7 +414,7 @@ def dump_benchmark_config(config: BenchmarkConfig) -> dict[str, Any]:
             "name": config.name,
             "description": config.description,
             "dataset": _dump_dataset_config(config.dataset),
-            "protocol": to_jsonable(config.protocol),
+            "protocol": protocol_config_payload(config.protocol),
             "metrics": to_jsonable(config.metrics),
             "models": [
                 _dump_model_config(model, default_execution=config.run.model_execution)
@@ -453,7 +450,9 @@ def load_benchmark_config(config_or_path: str | Path | dict[str, Any]) -> Benchm
         name=str(benchmark_block["name"]),
         description=benchmark_block.get("description"),
         dataset=_parse_dataset_config(benchmark_block["dataset"]),
-        protocol=Protocol(**_as_mapping(benchmark_block["protocol"], field_name="benchmark.protocol")),
+        protocol=protocol_from_mapping(
+            _as_mapping(benchmark_block["protocol"], field_name="benchmark.protocol")
+        ),
         metrics=resolve_metric_configs(benchmark_block.get("metrics")),
         models=[
             _parse_model_config(item, default_execution=run_config.model_execution)

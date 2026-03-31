@@ -63,39 +63,73 @@
           }
         },
         "protocol": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["train_size", "test_size", "context_length", "horizon"],
-          "properties": {
-            "train_size": {"type": "integer", "minimum": 2},
-            "test_size": {"type": "integer", "minimum": 1},
-            "context_length": {"type": "integer", "minimum": 0},
-            "horizon": {"type": "integer", "minimum": 1},
-            "generation_mode": {
-              "type": "string",
-              "enum": ["forecast", "unconditional"],
-              "default": "forecast"
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "horizon", "forecast"],
+              "properties": {
+                "kind": {"type": "string", "const": "forecast"},
+                "horizon": {"type": "integer", "minimum": 1},
+                "n_model_scenarios": {"type": "integer", "minimum": 1, "default": 64},
+                "n_reference_scenarios": {"type": "integer", "minimum": 1, "default": 128},
+                "forecast": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["train_size", "test_size", "context_length"],
+                  "properties": {
+                    "train_size": {"type": "integer", "minimum": 2},
+                    "test_size": {"type": "integer", "minimum": 1},
+                    "context_length": {"type": "integer", "minimum": 1},
+                    "eval_stride": {"type": "integer", "minimum": 1, "default": 10},
+                    "train_stride": {"type": "integer", "minimum": 1, "default": 1}
+                  }
+                }
+              }
             },
-            "eval_stride": {"type": "integer", "minimum": 1, "default": 10},
-            "train_stride": {"type": "integer", "minimum": 1, "default": 1},
-            "unconditional_train_data_mode": {
-              "type": ["string", "null"],
-              "enum": ["windowed_path", "path_dataset", null],
-              "default": null
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "horizon", "unconditional_windowed"],
+              "properties": {
+                "kind": {"type": "string", "const": "unconditional_windowed"},
+                "horizon": {"type": "integer", "minimum": 1},
+                "n_model_scenarios": {"type": "integer", "minimum": 1, "default": 64},
+                "n_reference_scenarios": {"type": "integer", "minimum": 1, "default": 128},
+                "unconditional_windowed": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["train_size", "test_size"],
+                  "properties": {
+                    "train_size": {"type": "integer", "minimum": 2},
+                    "test_size": {"type": "integer", "minimum": 1},
+                    "eval_stride": {"type": "integer", "minimum": 1, "default": 10},
+                    "train_stride": {"type": "integer", "minimum": 1, "default": 1}
+                  }
+                }
+              }
             },
-            "unconditional_train_window_length": {
-              "type": ["integer", "null"],
-              "minimum": 1,
-              "default": null
-            },
-            "unconditional_n_train_paths": {
-              "type": ["integer", "null"],
-              "minimum": 1,
-              "default": null
-            },
-            "n_model_scenarios": {"type": "integer", "minimum": 1, "default": 64},
-            "n_reference_scenarios": {"type": "integer", "minimum": 1, "default": 128}
-          }
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "horizon", "unconditional_path_dataset"],
+              "properties": {
+                "kind": {"type": "string", "const": "unconditional_path_dataset"},
+                "horizon": {"type": "integer", "minimum": 1},
+                "n_model_scenarios": {"type": "integer", "minimum": 1, "default": 64},
+                "n_reference_scenarios": {"type": "integer", "minimum": 1, "default": 128},
+                "unconditional_path_dataset": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["n_train_paths", "n_realized_paths"],
+                  "properties": {
+                    "n_train_paths": {"type": "integer", "minimum": 1},
+                    "n_realized_paths": {"type": "integer", "minimum": 1}
+                  }
+                }
+              }
+            }
+          ]
         },
         "metrics": {
           "type": "array",

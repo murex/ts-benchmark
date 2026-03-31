@@ -13,12 +13,20 @@ from .catalog import (
 )
 from .definition import BenchmarkConfig
 from .io import dump_benchmark_config, load_benchmark_config, validate_benchmark_config
-from .protocol import Protocol
+from .protocol import (
+    ForecastProtocol,
+    Protocol,
+    UnconditionalPathDatasetProtocol,
+    UnconditionalWindowedProtocol,
+)
 
 __all__ = [
     "BenchmarkConfig",
     "BenchmarkSummary",
+    "ForecastProtocol",
     "Protocol",
+    "UnconditionalPathDatasetProtocol",
+    "UnconditionalWindowedProtocol",
     "benchmark_key_for_path",
     "default_benchmark_config_dir",
     "dump_benchmark_config",

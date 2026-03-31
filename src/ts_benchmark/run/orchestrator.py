@@ -17,6 +17,7 @@ import numpy as np
 from ..benchmark.definition import BenchmarkConfig
 from ..benchmark.catalog import resolve_benchmark_reference
 from ..benchmark.io import load_benchmark_config
+from ..benchmark.protocol import protocol_metadata_payload
 from ..dataset.factory import build_dataset
 from ..dataset.runtime import DatasetInstance
 from ..metrics import select_metric_configs_for_run
@@ -247,7 +248,7 @@ def _run_loaded_config_parallel(
             "dataset_source": dataset.source,
             "device": format_devices_for_metadata(execution_devices),
             "has_reference_scenarios": bool(dataset.has_reference_scenarios()),
-            **to_jsonable(config.protocol),
+            **protocol_metadata_payload(config.protocol),
             "execution_mode": "model_parallel",
         }
     )

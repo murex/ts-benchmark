@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from ..benchmark.protocol import Protocol
+from ..benchmark.protocol import Protocol, protocol_metadata_payload
 from ..serialization import to_jsonable
 from ..utils import JsonObject
 
@@ -91,7 +91,7 @@ class DatasetInstance:
             "n_assets": int(np.asarray(self.train_returns).shape[1]),
             "n_train_paths": None if self.train_paths is None else len(self.train_paths),
             "asset_names": list(self.asset_names),
-            **to_jsonable(self.protocol),
+            **protocol_metadata_payload(self.protocol),
             "n_eval_windows": int(np.asarray(self.contexts).shape[0]),
             "has_reference_scenarios": bool(self.has_reference_scenarios()),
             "metadata": self.metadata.to_builtin(),

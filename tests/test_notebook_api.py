@@ -44,14 +44,17 @@ def _notebook_smoke_config(*, output_dir: Path) -> dict[str, object]:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 80,
-                "test_size": 20,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 5,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 12,
+                "forecast": {
+                    "train_size": 80,
+                    "test_size": 20,
+                    "context_length": 8,
+                    "eval_stride": 5,
+                    "train_stride": 1,
+                },
             },
             "metrics": [{"name": "crps"}],
             "models": [

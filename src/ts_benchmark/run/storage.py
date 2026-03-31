@@ -10,6 +10,7 @@ import numpy as np
 
 from ..benchmark import benchmark_key_for_path
 from ..benchmark import dump_benchmark_config
+from ..benchmark.protocol import protocol_config_payload, protocol_metadata_payload
 from ..benchmark.definition import BenchmarkConfig
 from ..metrics import select_metric_configs_for_run
 from ..paths import OUTPUT_DIR
@@ -59,7 +60,8 @@ def dataset_summary(config: BenchmarkConfig, dataset, results: BenchmarkResults)
             "runtime_metadata": to_jsonable(dataset.metadata),
         },
         "protocol": {
-            **to_jsonable(config.protocol),
+            **protocol_config_payload(config.protocol),
+            **protocol_metadata_payload(config.protocol),
             "n_eval_windows": int(dataset.contexts.shape[0]),
             "n_assets": int(dataset.train_returns.shape[1]),
             "asset_names": list(dataset.asset_names),

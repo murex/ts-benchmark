@@ -24,6 +24,7 @@ from ts_benchmark.model.model_contract import (
 )
 
 from .contract_support import (
+    coerce_forecast_history_series_collection,
     coerce_forecast_training_series_collection,
     coerce_series_values,
     make_list_dataset_from_series,
@@ -234,10 +235,15 @@ class PytorchTsTimeGradAdapter:
         horizon = require_forecast_task(task)
         target_dim = int(getattr(schema, "target_dim"))
         freq = getattr(schema, "freq", None) or "B"
-        train_series_collection, context_length = coerce_forecast_training_series_collection(
+        _, context_length = coerce_forecast_training_series_collection(
             train,
             target_dim=target_dim,
             horizon=horizon,
+        )
+        history_series_collection, _ = coerce_forecast_history_series_collection(
+            train,
+            horizon=horizon,
+            target_dim=target_dim,
         )
         _ensure_gluonts_distribution_output_compat()
 
@@ -250,7 +256,7 @@ class PytorchTsTimeGradAdapter:
             ) from exc
 
         dataset_train = make_list_dataset_from_series_collection(
-            train_series_collection,
+            history_series_collection,
             freq=freq,
             install_extra=_TIMEGRAD_EXTRA,
         )
@@ -297,7 +303,8 @@ class PytorchTsTimeGradAdapter:
                 "freq": freq,
                 "runtime_device_hint": runtime_device(runtime),
                 "resolved_device": resolved_device,
-                "training_series_count": len(train_series_collection),
+                "training_series_source": "forecast_history_examples",
+                "training_series_count": len(history_series_collection),
             },
         )
         return generator, report

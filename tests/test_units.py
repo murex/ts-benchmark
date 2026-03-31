@@ -267,7 +267,10 @@ class TestBenchmarkResultsRanking:
 # Rolling window tests
 # ---------------------------------------------------------------------------
 
-from ts_benchmark.dataset.windows import rolling_context_future_pairs
+from ts_benchmark.dataset.windows import (
+    rolling_context_future_pairs,
+    rolling_history_context_future_triplets,
+)
 
 
 class TestRollingWindows:
@@ -291,6 +294,22 @@ class TestRollingWindows:
         # first window: context=[0,1,2], future=[3,4]
         np.testing.assert_array_equal(contexts[0], x[0:3])
         np.testing.assert_array_equal(futures[0], x[3:5])
+
+    def test_history_context_future_alignment(self) -> None:
+        x = np.arange(20).reshape(10, 2).astype(float)
+        histories, contexts, futures = rolling_history_context_future_triplets(
+            x,
+            context_length=3,
+            horizon=2,
+            stride=1,
+        )
+        assert len(histories) == contexts.shape[0] == futures.shape[0] == 6
+        np.testing.assert_array_equal(histories[0], x[0:3])
+        np.testing.assert_array_equal(contexts[0], x[0:3])
+        np.testing.assert_array_equal(futures[0], x[3:5])
+        np.testing.assert_array_equal(histories[-1], x[0:8])
+        np.testing.assert_array_equal(contexts[-1], x[5:8])
+        np.testing.assert_array_equal(futures[-1], x[8:10])
 
     def test_short_series_raises(self) -> None:
         x = np.arange(4).reshape(2, 2).astype(float)
@@ -467,14 +486,17 @@ def _minimal_config(**overrides) -> dict:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 80,
-                "test_size": 20,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 5,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 12,
+                "forecast": {
+                    "train_size": 80,
+                    "test_size": 20,
+                    "context_length": 8,
+                    "eval_stride": 5,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
@@ -494,6 +516,46 @@ def _minimal_config(**overrides) -> dict:
     return config
 
 
+def _set_unconditional_windowed(protocol: dict[str, object], *, train_size: int = 80, test_size: int = 20) -> None:
+    protocol.clear()
+    protocol.update(
+        {
+            "kind": "unconditional_windowed",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+            "unconditional_windowed": {
+                "train_size": train_size,
+                "test_size": test_size,
+                "eval_stride": 5,
+                "train_stride": 1,
+            },
+        }
+    )
+
+
+def _set_unconditional_path_dataset(
+    protocol: dict[str, object],
+    *,
+    horizon: int = 3,
+    n_train_paths: int = 5,
+    n_realized_paths: int = 3,
+) -> None:
+    protocol.clear()
+    protocol.update(
+        {
+            "kind": "unconditional_path_dataset",
+            "horizon": horizon,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+            "unconditional_path_dataset": {
+                "n_train_paths": n_train_paths,
+                "n_realized_paths": n_realized_paths,
+            },
+        }
+    )
+
+
 class TestConfigValidation:
     def test_valid_config_loads(self) -> None:
         config = load_benchmark_config(_minimal_config())
@@ -502,56 +564,109 @@ class TestConfigValidation:
 
     def test_unconditional_config_loads_with_zero_context_length(self) -> None:
         cfg = _minimal_config()
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["context_length"] = 0
-        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "windowed_path"
-        cfg["benchmark"]["protocol"]["unconditional_train_window_length"] = 24
+        _set_unconditional_windowed(cfg["benchmark"]["protocol"])
         config = load_benchmark_config(cfg)
         assert config.protocol.generation_mode == "unconditional"
         assert config.protocol.context_length == 0
         assert config.protocol.unconditional_train_data_mode == "windowed_path"
-        assert config.protocol.unconditional_train_window_length == 24
+        assert config.protocol.unconditional_train_window_length == 3
 
     def test_unconditional_config_rejects_nonzero_context_length(self) -> None:
         cfg = _minimal_config()
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "windowed_path"
-        cfg["benchmark"]["protocol"]["unconditional_train_window_length"] = 24
-        with pytest.raises(ValueError, match="zero for unconditional"):
+        cfg["benchmark"]["protocol"] = {
+            "kind": "unconditional_windowed",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+            "unconditional_windowed": {
+                "train_size": 80,
+                "test_size": 20,
+                "context_length": 1,
+                "eval_stride": 5,
+                "train_stride": 1,
+            },
+        }
+        with pytest.raises(jsonschema.ValidationError):
             load_benchmark_config(cfg)
 
     def test_unconditional_config_requires_train_data_mode(self) -> None:
         cfg = _minimal_config()
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["context_length"] = 0
-        with pytest.raises(ValueError, match="unconditional_train_data_mode"):
+        cfg["benchmark"]["protocol"] = {
+            "kind": "unconditional",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+        }
+        with pytest.raises(jsonschema.ValidationError):
             load_benchmark_config(cfg)
 
     def test_unconditional_windowed_path_config_requires_train_window_length(self) -> None:
         cfg = _minimal_config()
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["context_length"] = 0
-        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "windowed_path"
-        with pytest.raises(ValueError, match="unconditional_train_window_length"):
+        cfg["benchmark"]["protocol"] = {
+            "kind": "unconditional_windowed",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_windowed_path_requires_window_length_to_match_horizon(self) -> None:
+        cfg = _minimal_config()
+        _set_unconditional_windowed(cfg["benchmark"]["protocol"], train_size=2)
+        with pytest.raises(ValueError, match="greater than or equal to horizon"):
             load_benchmark_config(cfg)
 
     def test_unconditional_path_dataset_config_loads(self) -> None:
         cfg = _minimal_config()
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["context_length"] = 0
-        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "path_dataset"
-        cfg["benchmark"]["protocol"]["unconditional_n_train_paths"] = 5
+        _set_unconditional_path_dataset(cfg["benchmark"]["protocol"])
         config = load_benchmark_config(cfg)
         assert config.protocol.generation_mode == "unconditional"
         assert config.protocol.unconditional_train_data_mode == "path_dataset"
         assert config.protocol.unconditional_n_train_paths == 5
+        assert config.protocol.unconditional_n_eval_paths == 3
 
     def test_unconditional_path_dataset_requires_n_train_paths(self) -> None:
         cfg = _minimal_config()
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["context_length"] = 0
-        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "path_dataset"
-        with pytest.raises(ValueError, match="unconditional_n_train_paths"):
+        cfg["benchmark"]["protocol"] = {
+            "kind": "unconditional_path_dataset",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+            "unconditional_path_dataset": {
+                "n_realized_paths": 3,
+            },
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_path_dataset_requires_n_eval_paths(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["protocol"] = {
+            "kind": "unconditional_path_dataset",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+            "unconditional_path_dataset": {
+                "n_train_paths": 5,
+            },
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            load_benchmark_config(cfg)
+
+    def test_unconditional_path_dataset_requires_positive_realized_paths(self) -> None:
+        cfg = _minimal_config()
+        cfg["benchmark"]["protocol"] = {
+            "kind": "unconditional_path_dataset",
+            "horizon": 3,
+            "n_model_scenarios": 8,
+            "n_reference_scenarios": 12,
+            "unconditional_path_dataset": {
+                "n_train_paths": 5,
+                "n_realized_paths": 0,
+            },
+        }
+        with pytest.raises(jsonschema.ValidationError):
             load_benchmark_config(cfg)
 
     def test_unconditional_path_dataset_is_restricted_to_synthetic_datasets(self) -> None:
@@ -566,10 +681,7 @@ class TestConfigValidation:
             "target_columns": ["asset_a", "asset_b"],
             "frequency": "B",
         }
-        cfg["benchmark"]["protocol"]["generation_mode"] = "unconditional"
-        cfg["benchmark"]["protocol"]["context_length"] = 0
-        cfg["benchmark"]["protocol"]["unconditional_train_data_mode"] = "path_dataset"
-        cfg["benchmark"]["protocol"]["unconditional_n_train_paths"] = 5
+        _set_unconditional_path_dataset(cfg["benchmark"]["protocol"])
         with pytest.raises(ValueError, match="currently supported only for synthetic datasets"):
             load_benchmark_config(cfg)
 

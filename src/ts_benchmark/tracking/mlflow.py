@@ -12,6 +12,7 @@ import pandas as pd
 
 from ..benchmark import dump_benchmark_config
 from ..benchmark.definition import BenchmarkConfig
+from ..benchmark.protocol import protocol_metadata_payload
 from ..dataset.runtime import DatasetInstance
 from ..metrics import select_metric_configs_for_run
 from ..results import BenchmarkResults, RunRecord, RunTrackingRecord
@@ -63,18 +64,7 @@ def _dataset_summary_payload(
             "runtime_metadata": to_jsonable(dataset.metadata),
         },
         "protocol": {
-            "train_size": config.protocol.train_size,
-            "test_size": config.protocol.test_size,
-            "generation_mode": config.protocol.generation_mode,
-            "context_length": config.protocol.context_length,
-            "horizon": config.protocol.horizon,
-            "eval_stride": config.protocol.eval_stride,
-            "train_stride": config.protocol.train_stride,
-            "unconditional_train_data_mode": config.protocol.unconditional_train_data_mode,
-            "unconditional_train_window_length": config.protocol.unconditional_train_window_length,
-            "unconditional_n_train_paths": config.protocol.unconditional_n_train_paths,
-            "n_model_scenarios": config.protocol.n_model_scenarios,
-            "n_reference_scenarios": config.protocol.n_reference_scenarios,
+            **protocol_metadata_payload(config.protocol),
             "n_eval_windows": int(dataset.contexts.shape[0]),
             "n_assets": int(dataset.train_returns.shape[1]),
             "asset_names": list(dataset.asset_names),

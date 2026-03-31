@@ -324,35 +324,53 @@ class RegimeSwitchingFactorSVGenerator:
         eval_stride = int(protocol.eval_stride)
         unconditional_train_data_mode = protocol.unconditional_train_data_mode
         unconditional_n_train_paths = protocol.unconditional_n_train_paths
+        unconditional_n_eval_paths = protocol.unconditional_n_eval_paths
         if generation_mode == "forecast" and train_size <= context_length:
             raise ValueError("train_size must be larger than context_length.")
-        if test_size < horizon:
+        if (
+            test_size < horizon
+            and not (
+                generation_mode == "unconditional"
+                and unconditional_train_data_mode == "path_dataset"
+            )
+        ):
             raise ValueError("test_size must be at least horizon.")
         if eval_stride <= 0:
             raise ValueError("eval_stride must be positive.")
 
         total_steps = train_size + test_size
         train_paths: list[np.ndarray] | None = None
+        eval_paths: list[np.ndarray] | None = None
         if generation_mode == "unconditional" and unconditional_train_data_mode == "path_dataset":
             if unconditional_n_train_paths is None:
                 raise ValueError(
                     "unconditional_n_train_paths is required for synthetic path-dataset training."
                 )
+            if unconditional_n_eval_paths is None:
+                raise ValueError(
+                    "unconditional_n_eval_paths is required for synthetic path-dataset evaluation."
+                )
             seed_rng = self._rng(seed)
             child_seeds = seed_rng.integers(
                 0,
                 np.iinfo(np.int64).max,
-                size=int(unconditional_n_train_paths) + 1,
+                size=int(unconditional_n_train_paths) + int(unconditional_n_eval_paths) + 1,
                 dtype=np.int64,
             )
             train_paths = [
                 self.simulate(train_size, seed=int(child_seed)).returns
-                for child_seed in child_seeds[:-1]
+                for child_seed in child_seeds[: int(unconditional_n_train_paths)]
             ]
-            simulation = self.simulate(total_steps, seed=int(child_seeds[-1]))
-            returns = simulation.returns
+            eval_paths = [
+                self.simulate(horizon, seed=int(child_seed)).returns
+                for child_seed in child_seeds[
+                    int(unconditional_n_train_paths) : int(unconditional_n_train_paths) + int(unconditional_n_eval_paths)
+                ]
+            ]
+            simulation = self.simulate(max(train_size, horizon), seed=int(child_seeds[-1]))
+            returns = None
             train_returns = np.concatenate(train_paths, axis=0)
-            test_returns = returns[train_size:]
+            test_returns = np.concatenate(eval_paths, axis=0)
             full_returns = np.concatenate([train_returns, test_returns], axis=0)
         else:
             simulation = self.simulate(total_steps, seed=seed)
@@ -365,13 +383,19 @@ class RegimeSwitchingFactorSVGenerator:
         realized_futures = []
         reference_states = []
 
-        for start in range(train_size, total_steps - horizon + 1, eval_stride):
-            if generation_mode == "forecast":
-                contexts.append(returns[start - context_length : start])
-                reference_states.append(simulation.states[start].copy())
-            else:
-                contexts.append(np.zeros((0, self.n_assets), dtype=float))
-            realized_futures.append(returns[start : start + horizon])
+        if generation_mode == "unconditional" and unconditional_train_data_mode == "path_dataset":
+            if eval_paths is None:
+                raise ValueError("Expected independent evaluation paths for unconditional path-dataset mode.")
+            contexts = [np.zeros((0, self.n_assets), dtype=float) for _ in eval_paths]
+            realized_futures = [np.asarray(path, dtype=float) for path in eval_paths]
+        else:
+            for start in range(train_size, total_steps - horizon + 1, eval_stride):
+                if generation_mode == "forecast":
+                    contexts.append(returns[start - context_length : start])
+                    reference_states.append(simulation.states[start].copy())
+                else:
+                    contexts.append(np.zeros((0, self.n_assets), dtype=float))
+                realized_futures.append(returns[start : start + horizon])
 
         if not contexts:
             raise ValueError("No evaluation windows were generated. Adjust test_size / horizon / eval_stride.")
@@ -417,10 +441,13 @@ class RegimeSwitchingFactorSVGenerator:
                 "generator_class": self.__class__.__name__,
                 "reference_state_count": len(reference_states),
                 "reference_mode": generation_mode,
-                "unconditional_train_data_mode": unconditional_train_data_mode,
-                "unconditional_n_train_paths": unconditional_n_train_paths,
+                "path_construction": unconditional_train_data_mode,
+                "n_train_paths": unconditional_n_train_paths,
+                "n_realized_paths": unconditional_n_eval_paths,
                 "train_path_count": None if train_paths is None else len(train_paths),
                 "train_path_length": None if train_paths is None else train_size,
+                "eval_path_count": None if eval_paths is None else len(eval_paths),
+                "eval_path_length": None if eval_paths is None else horizon,
                 "is_synthetic": True,
             },
             evaluation_timestamps=None,

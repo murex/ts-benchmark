@@ -11,7 +11,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ts_benchmark.benchmark import Protocol
+from ts_benchmark.benchmark import ForecastProtocol
 from ts_benchmark.dataset import RegimeSwitchingFactorSVGenerator
 from ts_benchmark.metrics import select_metric_configs_for_run
 from ts_benchmark.model import (
@@ -69,7 +69,7 @@ class GaussianIIDContractModel(ScenarioModel):
 
 def main() -> None:
     generator = RegimeSwitchingFactorSVGenerator(n_assets=4, seed=31)
-    protocol = Protocol(
+    protocol = ForecastProtocol(
         train_size=400,
         test_size=120,
         context_length=30,

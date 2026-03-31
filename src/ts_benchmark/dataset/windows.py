@@ -54,6 +54,54 @@ def rolling_context_future_pairs(
     return np.stack(contexts, axis=0), np.stack(futures, axis=0)
 
 
+def rolling_history_context_future_triplets(
+    returns: np.ndarray,
+    context_length: int,
+    horizon: int,
+    stride: int = 1,
+) -> tuple[list[np.ndarray], np.ndarray, np.ndarray]:
+    """Extract rolling forecast examples with full benchmark-owned past.
+
+    Parameters
+    ----------
+    returns:
+        Array of shape `[time, n_assets]`.
+    context_length:
+        Number of historical steps exposed as the conditioning suffix.
+    horizon:
+        Forecast horizon.
+    stride:
+        Step between consecutive forecast origins.
+
+    Returns
+    -------
+    histories, contexts, futures:
+        - `histories[i]`: all rows available up to origin `i`, shaped
+          `[history_time, n_assets]`
+        - `contexts[i]`: the trailing `context_length` rows of that history
+        - `futures[i]`: the benchmark target of length `horizon`
+    """
+    x = np.asarray(returns, dtype=float)
+    if x.ndim != 2:
+        raise ValueError("returns must be shaped [time, n_assets].")
+    if context_length <= 0 or horizon <= 0:
+        raise ValueError("context_length and horizon must be positive.")
+    if stride <= 0:
+        raise ValueError("stride must be positive.")
+    if len(x) < context_length + horizon:
+        raise ValueError("returns are too short for the requested window sizes.")
+
+    histories: list[np.ndarray] = []
+    contexts = []
+    futures = []
+    for end in range(context_length, len(x) - horizon + 1, stride):
+        histories.append(np.asarray(x[:end], dtype=float))
+        contexts.append(x[end - context_length : end])
+        futures.append(x[end : end + horizon])
+
+    return histories, np.stack(contexts, axis=0), np.stack(futures, axis=0)
+
+
 def rolling_series_windows(
     returns: np.ndarray,
     window_length: int,

@@ -6,9 +6,9 @@ from typing import Mapping
 
 import numpy as np
 
-from ..benchmark.protocol import Protocol
+from ..benchmark.protocol import Protocol, protocol_metadata_payload
 from ..dataset.runtime import DatasetInstance
-from ..dataset.windows import rolling_context_future_pairs, rolling_series_windows
+from ..dataset.windows import rolling_history_context_future_triplets, rolling_series_windows
 from ..metrics.definition import MetricConfig
 from ..metrics.distributional import compute_distributional_metrics
 from ..metrics.scoring import compute_sample_scoring_metrics
@@ -52,30 +52,34 @@ class ScenarioBenchmark:
         return RuntimeContext(device=self.runtime.device, seed=self.runtime.seed)
 
     def _forecast_window_collection(self, dataset: DatasetInstance) -> ForecastWindowCollection:
+        histories_parts: list[list[np.ndarray]] = []
         contexts_parts: list[np.ndarray] = []
         targets_parts: list[np.ndarray] = []
         source_kind = "single_path"
         if dataset.train_paths is not None:
             source_kind = "path_dataset"
             for path in dataset.train_paths:
-                contexts, targets = rolling_context_future_pairs(
+                histories, contexts, targets = rolling_history_context_future_triplets(
                     path,
                     context_length=self.protocol.context_length,
                     horizon=self.protocol.horizon,
                     stride=self.protocol.train_stride,
                 )
+                histories_parts.append(histories)
                 contexts_parts.append(np.asarray(contexts, dtype=float))
                 targets_parts.append(np.asarray(targets, dtype=float))
         else:
-            contexts, targets = rolling_context_future_pairs(
+            histories, contexts, targets = rolling_history_context_future_triplets(
                 dataset.train_returns,
                 context_length=self.protocol.context_length,
                 horizon=self.protocol.horizon,
                 stride=self.protocol.train_stride,
             )
+            histories_parts.append(histories)
             contexts_parts.append(np.asarray(contexts, dtype=float))
             targets_parts.append(np.asarray(targets, dtype=float))
         return ForecastWindowCollection(
+            histories=[history for histories in histories_parts for history in histories],
             contexts=np.concatenate(contexts_parts, axis=0),
             targets=np.concatenate(targets_parts, axis=0),
             source_kind=source_kind,
@@ -284,7 +288,7 @@ class ScenarioBenchmark:
                 "dataset_source": dataset.source,
                 "device": self.runtime.device,
                 "has_reference_scenarios": bool(reference_scenarios is not None),
-                **to_jsonable(self.protocol),
+                **protocol_metadata_payload(self.protocol),
             }
         )
         return BenchmarkResults.from_model_results(

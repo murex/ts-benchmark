@@ -35,6 +35,7 @@ def _small_synthetic_config(
     context_length: int | None = None,
     unconditional_train_data_mode: str | None = None,
     unconditional_n_train_paths: int | None = None,
+    unconditional_n_eval_paths: int | None = None,
     device: str | None = None,
     scheduler: str = "auto",
     output_dir: str | None = None,
@@ -46,11 +47,7 @@ def _small_synthetic_config(
     resolved_unconditional_train_data_mode = unconditional_train_data_mode
     if generation_mode == "unconditional" and resolved_unconditional_train_data_mode is None:
         resolved_unconditional_train_data_mode = "windowed_path"
-    unconditional_train_window_length = (
-        24
-        if generation_mode == "unconditional" and resolved_unconditional_train_data_mode == "windowed_path"
-        else None
-    )
+    resolved_horizon = 2
     resolved_unconditional_n_train_paths = (
         6
         if generation_mode == "unconditional"
@@ -58,6 +55,52 @@ def _small_synthetic_config(
         and unconditional_n_train_paths is None
         else unconditional_n_train_paths
     )
+    resolved_unconditional_n_eval_paths = (
+        4
+        if generation_mode == "unconditional"
+        and resolved_unconditional_train_data_mode == "path_dataset"
+        and unconditional_n_eval_paths is None
+        else unconditional_n_eval_paths
+    )
+    resolved_protocol: dict[str, object]
+    if generation_mode == "forecast":
+        resolved_protocol = {
+            "kind": "forecast",
+            "horizon": resolved_horizon,
+            "n_model_scenarios": 6,
+            "n_reference_scenarios": 10,
+            "forecast": {
+                "train_size": 60,
+                "test_size": 12,
+                "context_length": resolved_context_length,
+                "eval_stride": 6,
+                "train_stride": 1,
+            },
+        }
+    elif resolved_unconditional_train_data_mode == "path_dataset":
+        resolved_protocol = {
+            "kind": "unconditional_path_dataset",
+            "horizon": resolved_horizon,
+            "n_model_scenarios": 6,
+            "n_reference_scenarios": 10,
+            "unconditional_path_dataset": {
+                "n_train_paths": resolved_unconditional_n_train_paths,
+                "n_realized_paths": resolved_unconditional_n_eval_paths,
+            },
+        }
+    else:
+        resolved_protocol = {
+            "kind": "unconditional_windowed",
+            "horizon": resolved_horizon,
+            "n_model_scenarios": 6,
+            "n_reference_scenarios": 10,
+            "unconditional_windowed": {
+                "train_size": 60,
+                "test_size": 12,
+                "eval_stride": 6,
+                "train_stride": 1,
+            },
+        }
 
     return {
         "version": "1.0",
@@ -75,20 +118,7 @@ def _small_synthetic_config(
                 "semantics": {},
                 "metadata": {},
             },
-            "protocol": {
-                "train_size": 60,
-                "test_size": 12,
-                "context_length": resolved_context_length,
-                "horizon": 2,
-                "generation_mode": generation_mode,
-                "eval_stride": 6,
-                "train_stride": 1,
-                "unconditional_train_data_mode": resolved_unconditional_train_data_mode,
-                "unconditional_train_window_length": unconditional_train_window_length,
-                "unconditional_n_train_paths": resolved_unconditional_n_train_paths,
-                "n_model_scenarios": 6,
-                "n_reference_scenarios": 10,
-            },
+            "protocol": resolved_protocol,
             "metrics": [{"name": "crps"}],
             "models": models,
         },
@@ -216,14 +246,17 @@ def test_dump_benchmark_config_round_trip() -> None:
                     "metadata": {},
                 },
                 "protocol": {
-                    "train_size": 100,
-                    "test_size": 24,
-                    "context_length": 8,
+                    "kind": "forecast",
                     "horizon": 3,
-                    "eval_stride": 6,
-                    "train_stride": 1,
                     "n_model_scenarios": 8,
                     "n_reference_scenarios": 16,
+                    "forecast": {
+                        "train_size": 100,
+                        "test_size": 24,
+                        "context_length": 8,
+                        "eval_stride": 6,
+                        "train_stride": 1,
+                    },
                 },
                 "metrics": [{"name": "crps"}, {"name": "energy_score"}],
                 "models": [
@@ -285,14 +318,17 @@ def test_structured_dataset_config_smoke() -> None:
                     "metadata": {"provenance": "unit-test"},
                 },
                 "protocol": {
-                    "train_size": 90,
-                    "test_size": 24,
-                    "context_length": 8,
+                    "kind": "forecast",
                     "horizon": 3,
-                    "eval_stride": 8,
-                    "train_stride": 1,
                     "n_model_scenarios": 8,
                     "n_reference_scenarios": 16,
+                    "forecast": {
+                        "train_size": 90,
+                        "test_size": 24,
+                        "context_length": 8,
+                        "eval_stride": 8,
+                        "train_stride": 1,
+                    },
                 },
                 "models": [
                     {
@@ -497,7 +533,7 @@ def test_unconditional_config_runner_smoke(tmp_path: Path) -> None:
     metrics = artifacts.results.metrics_frame(include_metadata=True)
     assert artifacts.run.status == "succeeded"
     assert metrics.loc["unconditional_debug_model", "generation_mode"] == "unconditional"
-    assert metrics.loc["unconditional_debug_model", "unconditional_train_data_mode"] == "windowed_path"
+    assert metrics.loc["unconditional_debug_model", "path_construction"] == "windowed_path"
     assert metrics.loc["unconditional_debug_model", "crps"] >= 0.0
     scenarios = artifacts.results.model_results[0].scenario_output
     assert scenarios is None
@@ -510,6 +546,7 @@ def test_unconditional_path_dataset_config_runner_smoke(tmp_path: Path) -> None:
         generation_mode="unconditional",
         unconditional_train_data_mode="path_dataset",
         unconditional_n_train_paths=5,
+        unconditional_n_eval_paths=3,
         models=[
             {
                 "name": "unconditional_debug_model",
@@ -528,8 +565,9 @@ def test_unconditional_path_dataset_config_runner_smoke(tmp_path: Path) -> None:
     metrics = artifacts.results.metrics_frame(include_metadata=True)
     assert artifacts.run.status == "succeeded"
     assert metrics.loc["unconditional_debug_model", "generation_mode"] == "unconditional"
-    assert metrics.loc["unconditional_debug_model", "unconditional_train_data_mode"] == "path_dataset"
-    assert metrics.loc["unconditional_debug_model", "unconditional_n_train_paths"] == 5
+    assert metrics.loc["unconditional_debug_model", "path_construction"] == "path_dataset"
+    assert metrics.loc["unconditional_debug_model", "n_train_paths"] == 5
+    assert metrics.loc["unconditional_debug_model", "n_realized_paths"] == 3
     assert metrics.loc["unconditional_debug_model", "crps"] >= 0.0
 
 
@@ -624,14 +662,17 @@ def test_subprocess_model_execution_smoke() -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 90,
-                "test_size": 24,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 8,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 16,
+                "forecast": {
+                    "train_size": 90,
+                    "test_size": 24,
+                    "context_length": 8,
+                    "eval_stride": 8,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
@@ -714,14 +755,17 @@ def test_run_level_subprocess_execution_smoke() -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 90,
-                "test_size": 24,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 8,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 16,
+                "forecast": {
+                    "train_size": 90,
+                    "test_size": 24,
+                    "context_length": 8,
+                    "eval_stride": 8,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
@@ -782,14 +826,17 @@ def test_csv_dataset_smoke() -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 80,
-                "test_size": 20,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 5,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 12,
+                "forecast": {
+                    "train_size": 80,
+                    "test_size": 20,
+                    "context_length": 8,
+                    "eval_stride": 5,
+                    "train_stride": 1,
+                },
             },
             "metrics": [{"name": "crps"}, {"name": "energy_score"}],
             "models": [
@@ -834,14 +881,17 @@ def test_loader_rejects_task_fields_inside_model_params() -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 100,
-                "test_size": 20,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 2,
-                "eval_stride": 5,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 16,
+                "forecast": {
+                    "train_size": 100,
+                    "test_size": 20,
+                    "context_length": 8,
+                    "eval_stride": 5,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
@@ -896,14 +946,17 @@ def test_loader_rejects_invalid_execution_block() -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 100,
-                "test_size": 20,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 2,
-                "eval_stride": 5,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 16,
+                "forecast": {
+                    "train_size": 100,
+                    "test_size": 20,
+                    "context_length": 8,
+                    "eval_stride": 5,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
@@ -942,14 +995,17 @@ def test_diagnostics_outputs_smoke(tmp_path: Path) -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 100,
-                "test_size": 24,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 8,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 12,
+                "forecast": {
+                    "train_size": 100,
+                    "test_size": 24,
+                    "context_length": 8,
+                    "eval_stride": 8,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
@@ -1026,14 +1082,17 @@ def test_mlflow_tracking_smoke(tmp_path: Path) -> None:
                 "metadata": {},
             },
             "protocol": {
-                "train_size": 80,
-                "test_size": 20,
-                "context_length": 8,
+                "kind": "forecast",
                 "horizon": 3,
-                "eval_stride": 5,
-                "train_stride": 1,
                 "n_model_scenarios": 8,
                 "n_reference_scenarios": 12,
+                "forecast": {
+                    "train_size": 80,
+                    "test_size": 20,
+                    "context_length": 8,
+                    "eval_stride": 5,
+                    "train_stride": 1,
+                },
             },
             "models": [
                 {
