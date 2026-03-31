@@ -160,6 +160,55 @@ class RobustScalerTransform(Transform):
 
 
 @dataclass
+class MinMaxScalerTransform(Transform):
+    feature_min: float = 0.0
+    feature_max: float = 1.0
+    clip: bool = False
+    eps: float = 1e-8
+    name: str = "min_max_scale"
+    data_min_: np.ndarray | None = field(default=None, init=False)
+    data_max_: np.ndarray | None = field(default=None, init=False)
+    scale_range_: np.ndarray | None = field(default=None, init=False)
+
+    def fit(self, x: np.ndarray) -> "MinMaxScalerTransform":
+        if self.feature_max <= self.feature_min:
+            raise ValueError("feature_max must be strictly greater than feature_min.")
+        flat, _ = self._flatten_last_axis(np.asarray(x, dtype=float))
+        self.data_min_ = flat.min(axis=0)
+        self.data_max_ = flat.max(axis=0)
+        raw_range = self.data_max_ - self.data_min_
+        self.scale_range_ = np.where(raw_range < self.eps, 1.0, raw_range)
+        self.is_fitted = True
+        return self
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        if self.data_min_ is None or self.scale_range_ is None:
+            raise RuntimeError("MinMaxScalerTransform must be fit before transform.")
+        flat, shape = self._flatten_last_axis(np.asarray(x, dtype=float))
+        feature_range = self.feature_max - self.feature_min
+        transformed = ((flat - self.data_min_) / self.scale_range_) * feature_range + self.feature_min
+        if self.clip:
+            transformed = np.clip(transformed, self.feature_min, self.feature_max)
+        return self._restore_last_axis(transformed, shape)
+
+    def inverse_transform(self, x: np.ndarray) -> np.ndarray:
+        if self.data_min_ is None or self.scale_range_ is None:
+            raise RuntimeError("MinMaxScalerTransform must be fit before inverse_transform.")
+        flat, shape = self._flatten_last_axis(np.asarray(x, dtype=float))
+        feature_range = self.feature_max - self.feature_min
+        restored = ((flat - self.feature_min) / feature_range) * self.scale_range_ + self.data_min_
+        return self._restore_last_axis(restored, shape)
+
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "type": self.name,
+            "feature_min": self.feature_min,
+            "feature_max": self.feature_max,
+            "clip": self.clip,
+        }
+
+
+@dataclass
 class ClipTransform(Transform):
     min_value: float = -0.25
     max_value: float = 0.25

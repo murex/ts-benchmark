@@ -22,6 +22,7 @@ from ts_benchmark.preprocessing.transforms import (
     ClipTransform,
     DemeanTransform,
     IdentityTransform,
+    MinMaxScalerTransform,
     RobustScalerTransform,
     StandardScalerTransform,
     WinsorizeTransform,
@@ -71,9 +72,31 @@ class TestTransformRoundTrips:
         t.fit(data)
         assert np.allclose(t.inverse_transform(t.transform(data)), data)
 
+    def test_minmax_scaler_round_trip(self, data: np.ndarray) -> None:
+        t = MinMaxScalerTransform(feature_min=0.0, feature_max=1.0)
+        t.fit(data)
+        transformed = t.transform(data)
+        assert np.allclose(transformed.min(axis=0), 0.0, atol=1e-10)
+        assert np.allclose(transformed.max(axis=0), 1.0, atol=1e-10)
+        assert np.allclose(t.inverse_transform(transformed), data)
+
+    def test_minmax_scaler_constant_feature_is_safe(self) -> None:
+        x = np.array(
+            [
+                [3.0, 1.0],
+                [3.0, 2.0],
+                [3.0, 3.0],
+            ]
+        )
+        t = MinMaxScalerTransform(feature_min=-1.0, feature_max=1.0)
+        t.fit(x)
+        transformed = t.transform(x)
+        assert np.allclose(transformed[:, 0], -1.0)
+        assert np.allclose(t.inverse_transform(transformed), x)
+
     def test_transforms_work_on_3d_arrays(self, data: np.ndarray) -> None:
         data_3d = data.reshape(10, 10, 4)
-        for Transform in [DemeanTransform, StandardScalerTransform, RobustScalerTransform]:
+        for Transform in [DemeanTransform, StandardScalerTransform, RobustScalerTransform, MinMaxScalerTransform]:
             t = Transform()
             t.fit(data)
             transformed = t.transform(data_3d)
@@ -118,6 +141,18 @@ class TestPipelineRoundTrips:
         assert summary["name"] == "std"
         assert len(summary["steps"]) == 1
         assert summary["steps"][0]["type"] == "standard_scale"
+
+    def test_minmax_pipeline_round_trip(self) -> None:
+        x = np.array([[1.0, 2.0], [3.0, 6.0], [5.0, 10.0]])
+        pipeline = build_pipeline_from_config(
+            "minmax",
+            [{"type": "min_max_scale", "params": {"feature_min": -1.0, "feature_max": 1.0}}],
+        )
+        pipeline.fit(x)
+        y = pipeline.transform(x)
+        assert np.allclose(y.min(axis=0), -1.0)
+        assert np.allclose(y.max(axis=0), 1.0)
+        assert np.allclose(pipeline.inverse_transform(y), x)
 
 
 # ---------------------------------------------------------------------------

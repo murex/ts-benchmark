@@ -20,6 +20,16 @@ PROTOCOL_UNCONDITIONAL_PATH_COUNT_KEY = "benchmarks.protocol.unconditional_n_tra
 PROTOCOL_UNCONDITIONAL_EVAL_PATH_COUNT_KEY = "benchmarks.protocol.unconditional_n_eval_paths"
 PROTOCOL_REGION_TRAIN_SIZE_KEY = "benchmarks.protocol.train_size_region"
 PROTOCOL_REGION_TEST_SIZE_KEY = "benchmarks.protocol.test_size_region"
+PREPROCESSING_PRESET_OPTIONS = ["raw", "standardized", "minmax", "custom"]
+PREPROCESSING_STEP_TYPE_OPTIONS = [
+    "identity",
+    "demean",
+    "standard_scale",
+    "min_max_scale",
+    "robust_scale",
+    "clip",
+    "winsorize",
+]
 
 
 def _dataset_supports_reference_scenarios(config: dict[str, Any]) -> bool:
@@ -125,6 +135,88 @@ def _normalize_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     for _, row in normalized.iterrows():
         records.append({str(column): row[column] for column in normalized.columns})
     return records
+
+
+def _raw_pipeline_config() -> dict[str, Any]:
+    return {"name": "raw", "steps": []}
+
+
+def _standardized_pipeline_config() -> dict[str, Any]:
+    return {
+        "name": "standardized",
+        "steps": [
+            {"type": "standard_scale", "params": {"with_mean": True, "with_std": True}},
+        ],
+    }
+
+
+def _minmax_pipeline_config() -> dict[str, Any]:
+    return {
+        "name": "minmax",
+        "steps": [
+            {"type": "min_max_scale", "params": {"feature_min": 0.0, "feature_max": 1.0, "clip": False}},
+        ],
+    }
+
+
+def _normalize_pipeline_dict(pipeline: dict[str, Any] | None) -> dict[str, Any]:
+    resolved = dict(pipeline or {})
+    normalized_steps: list[dict[str, Any]] = []
+    for step in list(resolved.get("steps") or []):
+        normalized_steps.append(
+            {
+                "type": str(step.get("type") or "").strip(),
+                "params": dict(step.get("params") or {}),
+            }
+        )
+    return {
+        "name": str(resolved.get("name") or "raw"),
+        "steps": normalized_steps,
+    }
+
+
+def _pipeline_matches_preset(pipeline: dict[str, Any], preset_pipeline: dict[str, Any]) -> bool:
+    normalized = _normalize_pipeline_dict(pipeline)
+    expected = _normalize_pipeline_dict(preset_pipeline)
+    return normalized == expected
+
+
+def _infer_preprocessing_preset(pipeline: dict[str, Any] | None) -> str:
+    normalized = _normalize_pipeline_dict(pipeline)
+    if _pipeline_matches_preset(normalized, _raw_pipeline_config()):
+        return "raw"
+    if _pipeline_matches_preset(normalized, _standardized_pipeline_config()):
+        return "standardized"
+    if _pipeline_matches_preset(normalized, _minmax_pipeline_config()):
+        return "minmax"
+    return "custom"
+
+
+def _pipeline_from_preprocessing_preset(pipeline: dict[str, Any] | None, preset: str) -> dict[str, Any]:
+    if preset == "raw":
+        return _raw_pipeline_config()
+    if preset == "standardized":
+        return _standardized_pipeline_config()
+    if preset == "minmax":
+        normalized = _normalize_pipeline_dict(pipeline)
+        if normalized.get("steps"):
+            first = dict(normalized["steps"][0] or {})
+            if str(first.get("type") or "") == "min_max_scale":
+                return {
+                    "name": "minmax",
+                    "steps": [
+                        {
+                            "type": "min_max_scale",
+                            "params": {
+                                "feature_min": float(dict(first.get("params") or {}).get("feature_min", 0.0)),
+                                "feature_max": float(dict(first.get("params") or {}).get("feature_max", 1.0)),
+                                "clip": bool(dict(first.get("params") or {}).get("clip", False)),
+                            },
+                        }
+                    ],
+                }
+        return _minmax_pipeline_config()
+    return _normalize_pipeline_dict(pipeline)
 
 
 def render_config_general(config: dict[str, Any]) -> None:
@@ -854,21 +946,74 @@ def render_model_params_editor(
         key_prefix=f"{key_prefix}.metadata",
         allow_add_fields=allow_add_fields,
     )
-    pipeline = dict(model.get("pipeline") or {"name": "raw", "steps": []})
-    pipeline["name"] = st.text_input(
-        "Pipeline name",
-        value=pipeline.get("name") or "raw",
-        key=f"{key_prefix}.pipeline.name",
+    st.caption("Preprocessing")
+    pipeline = _normalize_pipeline_dict(model.get("pipeline"))
+    preset_key = f"{key_prefix}.pipeline.preset"
+    initial_preset = _infer_preprocessing_preset(pipeline)
+    st.session_state.setdefault(preset_key, initial_preset)
+    if st.session_state.get(preset_key) not in PREPROCESSING_PRESET_OPTIONS:
+        st.session_state[preset_key] = initial_preset
+    preset = str(
+        st.selectbox(
+            "Preprocessing",
+            options=PREPROCESSING_PRESET_OPTIONS,
+            key=preset_key,
+        )
     )
+    pipeline = _pipeline_from_preprocessing_preset(pipeline, preset)
+    if preset == "minmax":
+        step_params = dict(pipeline["steps"][0].get("params") or {})
+        cols = st.columns(3)
+        with cols[0]:
+            step_params["feature_min"] = float(
+                st.number_input(
+                    "Min value",
+                    value=float(step_params.get("feature_min", 0.0)),
+                    step=0.1,
+                    key=f"{key_prefix}.pipeline.minmax.feature_min",
+                )
+            )
+        with cols[1]:
+            step_params["feature_max"] = float(
+                st.number_input(
+                    "Max value",
+                    value=float(step_params.get("feature_max", 1.0)),
+                    step=0.1,
+                    key=f"{key_prefix}.pipeline.minmax.feature_max",
+                )
+            )
+        with cols[2]:
+            step_params["clip"] = bool(
+                st.checkbox(
+                    "Clip to range",
+                    value=bool(step_params.get("clip", False)),
+                    key=f"{key_prefix}.pipeline.minmax.clip",
+                )
+            )
+        pipeline["steps"][0]["params"] = step_params
+    if preset == "custom":
+        pipeline["name"] = st.text_input(
+            "Pipeline name",
+            value=pipeline.get("name") or "custom",
+            key=f"{key_prefix}.pipeline.name",
+        )
     steps = list(pipeline.get("steps") or [])
-    if show_pipeline_steps:
+    if preset == "custom":
         st.caption("Pipeline steps")
+        st.caption(f"Available step types: {', '.join(PREPROCESSING_STEP_TYPE_OPTIONS)}")
         step_frame = pd.DataFrame([{"type": step.get("type", "")} for step in steps])
         edited_steps = st.data_editor(
             step_frame,
             num_rows="dynamic",
             use_container_width=True,
             key=f"{key_prefix}.pipeline.steps",
+            column_config={
+                "type": st.column_config.SelectboxColumn(
+                    "type",
+                    options=PREPROCESSING_STEP_TYPE_OPTIONS,
+                    required=False,
+                )
+            },
         )
         new_steps: list[dict[str, Any]] = []
         for idx, row in edited_steps.iterrows():
@@ -932,7 +1077,7 @@ def render_models_editor(config: dict[str, Any]) -> None:
                 "name": model.get("name", ""),
                 "reference_kind": dict(model.get("reference") or {}).get("kind", "builtin"),
                 "reference_value": dict(model.get("reference") or {}).get("value", ""),
-                "pipeline_name": dict(model.get("pipeline") or {}).get("name", "raw"),
+                "preprocessing": _infer_preprocessing_preset(model.get("pipeline")),
                 "execution_mode": dict(model.get("execution") or {}).get("mode", "inprocess"),
             }
             for model in models
@@ -948,7 +1093,12 @@ def render_models_editor(config: dict[str, Any]) -> None:
                 "Reference type",
                 options=["builtin", "plugin", "entrypoint"],
                 required=True,
-            )
+            ),
+            "preprocessing": st.column_config.SelectboxColumn(
+                "Preprocessing",
+                options=PREPROCESSING_PRESET_OPTIONS,
+                required=True,
+            ),
         },
     )
     new_models: list[dict[str, Any]] = []
@@ -960,9 +1110,10 @@ def render_models_editor(config: dict[str, Any]) -> None:
             "kind": row.get("reference_kind") or "builtin",
             "value": row.get("reference_value") or "",
         }
-        pipeline = dict(updated.get("pipeline") or {"name": "raw", "steps": []})
-        pipeline["name"] = row.get("pipeline_name") or "raw"
-        updated["pipeline"] = pipeline
+        updated["pipeline"] = _pipeline_from_preprocessing_preset(
+            updated.get("pipeline"),
+            str(row.get("preprocessing") or "raw"),
+        )
         if (row.get("execution_mode") or "inprocess") == "inprocess":
             updated["execution"] = None
         else:

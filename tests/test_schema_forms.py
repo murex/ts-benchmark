@@ -9,6 +9,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from ts_benchmark.ui.schema_forms import (
     _count_sliding_windows,
     _default_region_lengths,
+    _infer_preprocessing_preset,
+    _pipeline_from_preprocessing_preset,
     _protocol_summary_lines,
 )
 
@@ -110,3 +112,39 @@ def test_default_region_lengths_ignore_path_dataset_fixed_lengths() -> None:
             },
         }
     ) == (96, 24)
+
+
+def test_infer_preprocessing_preset_detects_supported_presets() -> None:
+    assert _infer_preprocessing_preset({"name": "raw", "steps": []}) == "raw"
+    assert _infer_preprocessing_preset(
+        {
+            "name": "standardized",
+            "steps": [{"type": "standard_scale", "params": {"with_mean": True, "with_std": True}}],
+        }
+    ) == "standardized"
+    assert _infer_preprocessing_preset(
+        {
+            "name": "minmax",
+            "steps": [{"type": "min_max_scale", "params": {"feature_min": 0.0, "feature_max": 1.0, "clip": False}}],
+        }
+    ) == "minmax"
+
+
+def test_infer_preprocessing_preset_marks_noncanonical_pipeline_as_custom() -> None:
+    assert _infer_preprocessing_preset(
+        {
+            "name": "standardized",
+            "steps": [
+                {"type": "standard_scale", "params": {"with_mean": True, "with_std": True}},
+                {"type": "clip", "params": {"min_value": -5.0, "max_value": 5.0}},
+            ],
+        }
+    ) == "custom"
+
+
+def test_pipeline_from_preprocessing_preset_applies_minmax_config() -> None:
+    pipeline = _pipeline_from_preprocessing_preset(None, "minmax")
+    assert pipeline == {
+        "name": "minmax",
+        "steps": [{"type": "min_max_scale", "params": {"feature_min": 0.0, "feature_max": 1.0, "clip": False}}],
+    }

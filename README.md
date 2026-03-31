@@ -488,6 +488,7 @@ Built-in transforms include:
 - `identity`
 - `demean`
 - `standard_scale`
+- `min_max_scale`
 - `robust_scale`
 - `clip`
 - `winsorize`
