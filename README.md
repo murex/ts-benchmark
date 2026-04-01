@@ -625,18 +625,16 @@ Operational implications:
 
 ### What `plugin` really means
 
-A `plugin` is an installable Python package that registers model factories through the benchmark's entry-point groups:
+A `plugin` is an installable Python package that:
 
-```text
-ts_benchmark.models
-ts_benchmark.model_manifests
-```
+- registers a model factory through the benchmark's `ts_benchmark.models` entry-point group
+- ships a packaged `ts_benchmark_plugin.toml` metadata file next to the builder module
 
 Operational implications:
 
 - the plugin must be installed into the **same Python environment** used to run the benchmark CLI or Streamlit UI
 - once installed, the model can be referenced by a short name like `"reference": {"kind": "plugin", "value": "my_model"}`
-- plugin manifests make the model discoverable in the CLI/UI and enrich saved run metadata
+- the packaged plugin metadata file makes the model discoverable in the CLI/UI and enriches saved run metadata
 - if you install or update a plugin while the Streamlit UI is already running, restart the UI process so discovery metadata is refreshed
 
 ### Per-model external execution
@@ -928,7 +926,7 @@ should prefer `ts_benchmark.model_contract`.
 
 ## Plugin manifests and capability metadata
 
-A plugin manifest is optional but strongly recommended.
+A packaged plugin manifest is optional but strongly recommended.
 
 The benchmark uses manifests to populate the CLI, the Streamlit UI, and saved run metadata with information such as:
 
@@ -941,75 +939,37 @@ The benchmark uses manifests to populate the CLI, the Streamlit UI, and saved ru
 - whether it produces probabilistic samples
 - whether it uses the benchmark device setting directly
 
-### Manifest entry-point group
+### Packaged manifest shape
 
-The recommended manifest entry-point group is:
+Plugin metadata lives in a packaged `ts_benchmark_plugin.toml` resource. For a single-model package, the top-level shape is:
 
-```text
-ts_benchmark.model_manifests
+```toml
+[manifest]
+display_name = "My research model"
+version = "0.1.0"
+family = "diffusion"
+description = "Research prototype for probabilistic time-series scenarios."
+runtime_device_hints = ["cpu", "cuda"]
+supported_dataset_sources = ["synthetic", "csv", "parquet"]
+required_input = "returns"
+default_pipeline = "standardized"
+tags = ["research", "diffusion"]
+
+[manifest.capabilities]
+multivariate = true
+probabilistic_sampling = true
+benchmark_protocol_contract = true
+explicit_preprocessing = true
+uses_benchmark_device = true
 ```
 
-### Manifest shape
+For multi-model packages, use:
 
-A manifest can be returned either as a `ModelPluginManifest` object or as a plain dictionary.
-
-Example using the helper dataclasses:
-
-```python
-from ts_benchmark.model.catalog import ModelPluginManifest, PluginCapabilities
-
-PLUGIN_MANIFEST = ModelPluginManifest(
-    name="my_model",
-    display_name="My research model",
-    version="0.1.0",
-    family="diffusion",
-    description="Research prototype for probabilistic time-series scenarios.",
-    runtime_device_hints=("cpu", "cuda"),
-    supported_dataset_sources=("synthetic", "csv", "parquet"),
-    required_input="returns",
-    default_pipeline="standardized",
-    tags=("research", "diffusion"),
-    capabilities=PluginCapabilities(
-        multivariate=True,
-        probabilistic_sampling=True,
-        benchmark_protocol_contract=True,
-        explicit_preprocessing=True,
-        uses_benchmark_device=True,
-    ),
-)
+```toml
+[plugins.my_model.manifest]
+display_name = "My research model"
+default_pipeline = "standardized"
 ```
-
-Equivalent dictionary form:
-
-```python
-PLUGIN_MANIFEST = {
-    "name": "my_model",
-    "display_name": "My research model",
-    "version": "0.1.0",
-    "family": "diffusion",
-    "runtime_device_hints": ["cpu", "cuda"],
-    "supported_dataset_sources": ["synthetic", "csv", "parquet"],
-    "required_input": "returns",
-    "default_pipeline": "standardized",
-    "capabilities": {
-        "multivariate": True,
-        "probabilistic_sampling": True,
-        "benchmark_protocol_contract": True,
-        "explicit_preprocessing": True,
-        "uses_benchmark_device": True
-    }
-}
-```
-
-### Ways to expose a manifest
-
-The framework supports three practical patterns:
-
-1. **preferred:** publish a manifest provider in the `ts_benchmark.model_manifests` entry-point group
-2. attach `PLUGIN_MANIFEST` or `plugin_manifest` to the model class
-3. implement `get_plugin_manifest()` on the model class or instance
-
-Pattern 1 is the best choice for external plugins because the UI can discover metadata without importing the full model implementation path.
 
 ---
 
@@ -1155,49 +1115,31 @@ Use:
 - `default_pipeline` for the recommended pipeline
 - `required_pipeline` only when the model truly cannot be benchmarked correctly with any other pipeline
 
-### Step 5. Add a plugin manifest
+### Step 5. Add packaged plugin metadata
 
 Recommended approach:
 
-```python
-from ts_benchmark.model.catalog import ModelPluginManifest, PluginCapabilities
+```toml
+[manifest]
+display_name = "My research model"
+version = "0.1.0"
+family = "gaussian"
+description = "Example plugin description."
+runtime_device_hints = ["cpu", "cuda"]
+supported_dataset_sources = ["synthetic", "csv", "parquet"]
+required_input = "returns"
+default_pipeline = "raw"
 
-PLUGIN_MANIFEST = ModelPluginManifest(
-    name="my_model",
-    display_name="My research model",
-    version="0.1.0",
-    family="gaussian",
-    description="Example plugin description.",
-    runtime_device_hints=("cpu", "cuda"),
-    supported_dataset_sources=("synthetic", "csv", "parquet"),
-    required_input="returns",
-    default_pipeline="raw",
-    capabilities=PluginCapabilities(
-        multivariate=True,
-        probabilistic_sampling=True,
-        benchmark_protocol_contract=True,
-        explicit_preprocessing=True,
-        uses_benchmark_device=True,
-    ),
-)
+[manifest.capabilities]
+multivariate = true
+probabilistic_sampling = true
+benchmark_protocol_contract = true
+explicit_preprocessing = true
+uses_benchmark_device = true
 ```
 
 Add `required_pipeline="raw"` only if a different pipeline would make the model
 semantically invalid rather than merely suboptimal.
-
-Then either:
-
-```python
-class MyEstimator:
-    PLUGIN_MANIFEST = PLUGIN_MANIFEST
-```
-
-or expose:
-
-```python
-def get_plugin_manifest():
-    return PLUGIN_MANIFEST
-```
 
 ### Step 6. Expose the model as a plugin
 
@@ -1219,23 +1161,30 @@ This step is what turns your model from "importable Python code" into a discover
 
 Without this step, you can still benchmark the model through a direct config `reference.kind = "entrypoint"`, but it will not appear in plugin listings or the UI plugin browser.
 
-### Step 7. Expose the manifest entry point
+### Step 7. Add packaged plugin metadata
 
-Also in `pyproject.toml`:
+Add a `ts_benchmark_plugin.toml` file next to your plugin module and include it in package data.
+
+In `pyproject.toml`:
 
 ```toml
-[project.entry-points."ts_benchmark.model_manifests"]
-my_model = "my_model_plugin.plugin:get_plugin_manifest"
+[tool.setuptools.package-data]
+my_model_plugin = ["ts_benchmark_plugin.toml"]
 ```
 
-and in `plugin.py`:
+Example `ts_benchmark_plugin.toml`:
 
-```python
-def get_plugin_manifest():
-    return PLUGIN_MANIFEST
+```toml
+[manifest]
+display_name = "My model"
+default_pipeline = "raw"
+
+[manifest.capabilities]
+multivariate = true
+probabilistic_sampling = true
 ```
 
-This is the preferred way to make your plugin discoverable in the UI and CLI.
+This is how discoverable plugin metadata is surfaced in the UI and CLI.
 
 ### Step 8. Install your plugin in editable mode
 

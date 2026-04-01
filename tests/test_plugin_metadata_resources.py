@@ -11,7 +11,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from ts_benchmark.model.catalog import plugins
 from ts_benchmark.model.catalog.plugins import (
     MODEL_ENTRYPOINT_GROUP,
-    MODEL_MANIFEST_ENTRYPOINT_GROUP,
     clear_plugin_caches,
     resolve_model_plugin_manifest,
     resolve_model_plugin_parameter_schema,
@@ -31,15 +30,10 @@ def _patch_entry_points(
     monkeypatch,
     *,
     model_entry_points: list[metadata.EntryPoint],
-    manifest_entry_points: list[metadata.EntryPoint] | None = None,
 ) -> None:
-    manifest_entry_points = manifest_entry_points or []
-
     def fake_entry_points(*, group=None):
         if group == MODEL_ENTRYPOINT_GROUP:
             return list(model_entry_points)
-        if group == MODEL_MANIFEST_ENTRYPOINT_GROUP:
-            return list(manifest_entry_points)
         return []
 
     monkeypatch.setattr(plugins.metadata, "entry_points", fake_entry_points)
@@ -52,12 +46,6 @@ def test_plugin_resource_metadata_overrides_legacy_python_sources(monkeypatch, t
         plugin_source="""
 def build_model(ridge: float = 0.1):
     return {"ridge": ridge}
-
-def get_plugin_manifest():
-    return {
-        "display_name": "Legacy Python manifest",
-        "default_pipeline": "raw",
-    }
 
 build_model.PARAMETER_SCHEMA = {
     "name": "demo_plugin",
@@ -97,13 +85,6 @@ description = "Ridge coefficient from packaged metadata."
                 MODEL_ENTRYPOINT_GROUP,
             )
         ],
-        manifest_entry_points=[
-            metadata.EntryPoint(
-                "demo_plugin",
-                "demo_resource_plugin.plugin:get_plugin_manifest",
-                MODEL_MANIFEST_ENTRYPOINT_GROUP,
-            )
-        ],
     )
 
     clear_plugin_caches()
@@ -123,28 +104,28 @@ description = "Ridge coefficient from packaged metadata."
     ]
 
 
-def test_plugin_resource_metadata_ignores_broken_legacy_manifest_entrypoint(
+def test_plugin_discovery_ignores_python_manifest_and_schema_attributes_without_resource_file(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     _write_plugin_package(
         tmp_path,
-        "broken_legacy_manifest_plugin",
+        "legacy_python_only_plugin",
         plugin_source="""
 def build_model(beta: float = 0.75):
     return {"beta": beta}
-""".strip(),
-        toml_source="""
-[manifest]
-display_name = "Broken legacy manifest fallback"
-default_pipeline = "raw"
-""".strip(),
-    )
 
-    broken_manifest_package = tmp_path / "broken_manifest_provider"
-    broken_manifest_package.mkdir()
-    (broken_manifest_package / "__init__.py").write_text("", encoding="utf-8")
-    (broken_manifest_package / "plugin.py").write_text("x = 1\n", encoding="utf-8")
+build_model.PLUGIN_MANIFEST = {
+    "display_name": "Legacy Python manifest",
+    "default_pipeline": "minmax",
+}
+build_model.PARAMETER_SCHEMA = {
+    "name": "legacy_python_only",
+    "fields": [{"name": "legacy_beta", "value_type": "float", "default": 1.25}],
+}
+""".strip(),
+        toml_source=None,
+    )
 
     monkeypatch.syspath_prepend(str(tmp_path))
     importlib.invalidate_caches()
@@ -152,26 +133,27 @@ default_pipeline = "raw"
         monkeypatch,
         model_entry_points=[
             metadata.EntryPoint(
-                "broken_plugin",
-                "broken_legacy_manifest_plugin.plugin:build_model",
+                "legacy_python_only",
+                "legacy_python_only_plugin.plugin:build_model",
                 MODEL_ENTRYPOINT_GROUP,
-            )
-        ],
-        manifest_entry_points=[
-            metadata.EntryPoint(
-                "broken_plugin",
-                "broken_manifest_provider.plugin:get_plugin_manifest",
-                MODEL_MANIFEST_ENTRYPOINT_GROUP,
             )
         ],
     )
 
     clear_plugin_caches()
-    manifest = resolve_model_plugin_manifest("broken_plugin")
+    manifest = resolve_model_plugin_manifest("legacy_python_only")
+    schema = resolve_model_plugin_parameter_schema("legacy_python_only")
 
     assert manifest is not None
-    assert manifest.display_name == "Broken legacy manifest fallback"
-    assert manifest.manifest_source == "resource_file"
+    assert manifest.display_name == "legacy_python_only"
+    assert manifest.manifest_source == "default"
+    assert manifest.default_pipeline is None
+
+    assert schema is not None
+    assert schema.schema_source == "call_signature"
+    assert [(field.name, field.value_type, field.default) for field in schema.fields] == [
+        ("beta", "float", 0.75)
+    ]
 
 
 def test_plugin_resource_metadata_supports_single_plugin_top_level_format(

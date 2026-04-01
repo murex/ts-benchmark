@@ -4,10 +4,8 @@ The recommended way to benchmark a model under active development is to
 keep it in its own package/repository and expose a factory through the
 `ts_benchmark.models` entry-point group.
 
-Plugin metadata can be provided either through a packaged
-`ts_benchmark_plugin.toml` resource or, for legacy integrations, through
-the `ts_benchmark.model_manifests` entry-point group and builder
-attributes.
+Discoverable plugin metadata is loaded from a packaged
+`ts_benchmark_plugin.toml` resource colocated with the builder module.
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ from ...serialization import to_jsonable
 from .plugin_metadata import PluginResourceMetadata, load_plugin_resource_metadata
 
 MODEL_ENTRYPOINT_GROUP = "ts_benchmark.models"
-MODEL_MANIFEST_ENTRYPOINT_GROUP = "ts_benchmark.model_manifests"
 
 
 @dataclass(frozen=True)
@@ -590,15 +587,6 @@ def _model_entry_points() -> dict[str, metadata.EntryPoint]:
 
 
 @lru_cache(maxsize=1)
-def _manifest_entry_points() -> dict[str, metadata.EntryPoint]:
-    try:
-        entry_points = metadata.entry_points(group=MODEL_MANIFEST_ENTRYPOINT_GROUP)
-    except TypeError:  # pragma: no cover - older importlib.metadata fallback
-        entry_points = metadata.entry_points().get(MODEL_MANIFEST_ENTRYPOINT_GROUP, [])
-    return {ep.name: ep for ep in entry_points}
-
-
-@lru_cache(maxsize=1)
 def _entrypoint_model_factories() -> dict[str, Callable[..., Any]]:
     factories: dict[str, Callable[..., Any]] = {}
     for ep in _model_entry_points().values():
@@ -615,17 +603,10 @@ def _entrypoint_dist_info(ep: metadata.EntryPoint) -> tuple[str | None, str | No
     version = getattr(dist, "version", None)
     return name, version
 
-
-
-def _call_manifest_provider(provider: Any) -> Any:
-    return provider() if callable(provider) else provider
-
-
 @lru_cache(maxsize=1)
 def _entrypoint_manifests() -> dict[str, ModelPluginManifest]:
     manifests: dict[str, ModelPluginManifest] = {}
     resource_metadata = _entrypoint_resource_metadata()
-    legacy_manifest_eps = _manifest_entry_points()
     for ep in _model_entry_points().values():
         package, version = _entrypoint_dist_info(ep)
         resource_entry = resource_metadata.get(ep.name)
@@ -637,19 +618,11 @@ def _entrypoint_manifests() -> dict[str, ModelPluginManifest]:
                 default_source="resource_file",
             )
             continue
-        legacy_ep = legacy_manifest_eps.get(ep.name)
-        if legacy_ep is None:
-            continue
-        try:
-            provider = legacy_ep.load()
-            manifest_value = _call_manifest_provider(provider)
-        except Exception:
-            continue
         manifests[ep.name] = normalize_model_plugin_manifest(
-            manifest_value,
+            None,
             name=ep.name,
             default_version=version,
-            default_source="entry_point",
+            default_source="default",
         )
     return manifests
 
@@ -832,7 +805,30 @@ def resolve_model_plugin_parameter_schema(name: str) -> ModelParameterSchema | N
             default_source="resource_file",
         )
     builder = resolve_model_plugin(name)
-    return extract_model_parameter_schema(builder, default_name=name)
+    for config_cls in (
+        getattr(builder, "CONFIG_CLS", None),
+        None if getattr(builder, "__class__", None) is None else getattr(builder.__class__, "CONFIG_CLS", None),
+    ):
+        schema = _parameter_schema_from_dataclass_cls(
+            config_cls,
+            name=str(name),
+            default_source="config_dataclass",
+        )
+        if schema is not None and schema.fields:
+            return schema
+
+    schema = _builder_referenced_parameter_schema(builder, name=str(name))
+    if schema is not None and schema.fields:
+        return schema
+
+    schema = _parameter_schema_from_signature(
+        builder,
+        name=str(name),
+        default_source="call_signature",
+    )
+    if schema is not None and schema.fields:
+        return schema
+    return None
 
 
 
@@ -851,6 +847,5 @@ def clear_plugin_caches() -> None:
     discover_model_plugins.cache_clear()
     _entrypoint_model_factories.cache_clear()
     _model_entry_points.cache_clear()
-    _manifest_entry_points.cache_clear()
     _entrypoint_resource_metadata.cache_clear()
     _entrypoint_manifests.cache_clear()

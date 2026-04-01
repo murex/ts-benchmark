@@ -24,4 +24,4 @@ ts-benchmark plugins
 
 After installation, the plugin name `demo_gaussian_plugin` becomes available to benchmark configs through `model.reference`, for example `{"kind": "plugin", "value": "demo_gaussian_plugin"}`.
 
-This example also publishes a plugin manifest through the `ts_benchmark.model_manifests` entry-point group so that the benchmark UI and CLI can show capabilities such as supported dataset sources, probabilistic sampling support, and device hints.
+This example also ships a packaged `ts_benchmark_plugin.toml` resource so that the benchmark UI and CLI can show capabilities such as supported dataset sources, probabilistic sampling support, and device hints without any extra Python-side manifest entry point.

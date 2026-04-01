@@ -104,9 +104,9 @@ Use these names in benchmark configs:
 ## Add A New Adapter
 
 1. Add the adapter under `official_adapters/src/ts_benchmark_official_adapters/`.
-2. Add its manifest in `manifests.py`.
-3. Add a factory function and manifest getter in `plugin.py`.
-4. Register both entry points in `official_adapters/pyproject.toml`.
+2. Add a factory function in `plugin.py`.
+3. Add the adapter metadata to `official_adapters/src/ts_benchmark_official_adapters/ts_benchmark_plugin.toml`.
+4. Register the builder entry point in `official_adapters/pyproject.toml` and include the TOML file as package data.
 5. Reinstall the subproject in editable mode and verify discovery.
 
 Example entry points:
@@ -115,8 +115,8 @@ Example entry points:
 [project.entry-points."ts_benchmark.models"]
 my_model = "ts_benchmark_official_adapters.plugin:build_my_model"
 
-[project.entry-points."ts_benchmark.model_manifests"]
-my_model = "ts_benchmark_official_adapters.plugin:get_my_model_manifest"
+[tool.setuptools.package-data]
+ts_benchmark_official_adapters = ["ts_benchmark_plugin.toml"]
 ```
 
 Verification:
