@@ -625,17 +625,7 @@ def _call_manifest_provider(provider: Any) -> Any:
 def _entrypoint_manifests() -> dict[str, ModelPluginManifest]:
     manifests: dict[str, ModelPluginManifest] = {}
     resource_metadata = _entrypoint_resource_metadata()
-    legacy_manifests: dict[str, ModelPluginManifest] = {}
-    for ep in _manifest_entry_points().values():
-        package, version = _entrypoint_dist_info(ep)
-        provider = ep.load()
-        manifest_value = _call_manifest_provider(provider)
-        legacy_manifests[ep.name] = normalize_model_plugin_manifest(
-            manifest_value,
-            name=ep.name,
-            default_version=version,
-            default_source="entry_point",
-        )
+    legacy_manifest_eps = _manifest_entry_points()
     for ep in _model_entry_points().values():
         package, version = _entrypoint_dist_info(ep)
         resource_entry = resource_metadata.get(ep.name)
@@ -647,8 +637,20 @@ def _entrypoint_manifests() -> dict[str, ModelPluginManifest]:
                 default_source="resource_file",
             )
             continue
-        if ep.name in legacy_manifests:
-            manifests[ep.name] = legacy_manifests[ep.name]
+        legacy_ep = legacy_manifest_eps.get(ep.name)
+        if legacy_ep is None:
+            continue
+        try:
+            provider = legacy_ep.load()
+            manifest_value = _call_manifest_provider(provider)
+        except Exception:
+            continue
+        manifests[ep.name] = normalize_model_plugin_manifest(
+            manifest_value,
+            name=ep.name,
+            default_version=version,
+            default_source="entry_point",
+        )
     return manifests
 
 

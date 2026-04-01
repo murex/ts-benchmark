@@ -34,7 +34,6 @@ from .contract_support import (
     runtime_device,
     save_pickle_payload,
 )
-from .manifests import PYTORCHTS_TIMEGRAD_MANIFEST
 
 _TIMEGRAD_EXTRA = "ts-benchmark-official-adapters[timegrad]"
 
@@ -166,7 +165,6 @@ class PytorchTsTimeGradAdapter:
     """Estimator-like wrapper for `pts.model.time_grad.TimeGradEstimator`."""
 
     name = "pytorchts_timegrad"
-    PLUGIN_MANIFEST = PYTORCHTS_TIMEGRAD_MANIFEST
     CONFIG_CLS = PytorchTsTimeGradConfig
 
     def __init__(self, config: PytorchTsTimeGradConfig):

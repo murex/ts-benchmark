@@ -123,6 +123,57 @@ description = "Ridge coefficient from packaged metadata."
     ]
 
 
+def test_plugin_resource_metadata_ignores_broken_legacy_manifest_entrypoint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_plugin_package(
+        tmp_path,
+        "broken_legacy_manifest_plugin",
+        plugin_source="""
+def build_model(beta: float = 0.75):
+    return {"beta": beta}
+""".strip(),
+        toml_source="""
+[manifest]
+display_name = "Broken legacy manifest fallback"
+default_pipeline = "raw"
+""".strip(),
+    )
+
+    broken_manifest_package = tmp_path / "broken_manifest_provider"
+    broken_manifest_package.mkdir()
+    (broken_manifest_package / "__init__.py").write_text("", encoding="utf-8")
+    (broken_manifest_package / "plugin.py").write_text("x = 1\n", encoding="utf-8")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    _patch_entry_points(
+        monkeypatch,
+        model_entry_points=[
+            metadata.EntryPoint(
+                "broken_plugin",
+                "broken_legacy_manifest_plugin.plugin:build_model",
+                MODEL_ENTRYPOINT_GROUP,
+            )
+        ],
+        manifest_entry_points=[
+            metadata.EntryPoint(
+                "broken_plugin",
+                "broken_manifest_provider.plugin:get_plugin_manifest",
+                MODEL_MANIFEST_ENTRYPOINT_GROUP,
+            )
+        ],
+    )
+
+    clear_plugin_caches()
+    manifest = resolve_model_plugin_manifest("broken_plugin")
+
+    assert manifest is not None
+    assert manifest.display_name == "Broken legacy manifest fallback"
+    assert manifest.manifest_source == "resource_file"
+
+
 def test_plugin_resource_metadata_supports_single_plugin_top_level_format(
     monkeypatch,
     tmp_path: Path,
@@ -212,3 +263,43 @@ def test_example_plugin_uses_packaged_toml_metadata(monkeypatch) -> None:
     assert [(field.name, field.value_type, field.default) for field in schema.fields] == [
         ("ridge", "float", 1e-06)
     ]
+
+
+def test_official_adapters_use_packaged_toml_manifest(monkeypatch) -> None:
+    adapters_src = ROOT / "official_adapters" / "src"
+    monkeypatch.syspath_prepend(str(adapters_src))
+    importlib.invalidate_caches()
+    _patch_entry_points(
+        monkeypatch,
+        model_entry_points=[
+            metadata.EntryPoint(
+                "gluonts_deepvar",
+                "ts_benchmark_official_adapters.plugin:build_gluonts_deepvar",
+                MODEL_ENTRYPOINT_GROUP,
+            ),
+            metadata.EntryPoint(
+                "gluonts_gpvar",
+                "ts_benchmark_official_adapters.plugin:build_gluonts_gpvar",
+                MODEL_ENTRYPOINT_GROUP,
+            ),
+            metadata.EntryPoint(
+                "pytorchts_timegrad",
+                "ts_benchmark_official_adapters.plugin:build_pytorchts_timegrad",
+                MODEL_ENTRYPOINT_GROUP,
+            ),
+        ],
+    )
+
+    clear_plugin_caches()
+    manifest = resolve_model_plugin_manifest("pytorchts_timegrad")
+    schema = resolve_model_plugin_parameter_schema("pytorchts_timegrad")
+
+    assert manifest is not None
+    assert manifest.display_name == "pytorch-ts TimeGrad"
+    assert manifest.default_pipeline == "raw"
+    assert manifest.manifest_source == "resource_file"
+    assert manifest.capabilities.probabilistic_sampling is True
+
+    assert schema is not None
+    assert schema.schema_source == "config_dataclass"
+    assert any(field.name == "hidden_size" and field.value_type == "int" for field in schema.fields)

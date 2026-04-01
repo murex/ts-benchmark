@@ -32,7 +32,6 @@ from .contract_support import (
     runtime_device,
     save_pickle_payload,
 )
-from .manifests import GLUONTS_DEEPVAR_MANIFEST, GLUONTS_GPVAR_MANIFEST
 
 _GLUONTS_MX_EXTRA = "ts-benchmark-official-adapters[gluonts-mx]"
 
@@ -317,7 +316,6 @@ class _BaseGluonMxEstimator:
 
 class DeepVARAdapter(_BaseGluonMxEstimator):
     name = "gluonts_deepvar"
-    PLUGIN_MANIFEST = GLUONTS_DEEPVAR_MANIFEST
     CONFIG_CLS = DeepVARConfig
 
     def _load_estimator_class(self):
@@ -337,7 +335,6 @@ class DeepVARAdapter(_BaseGluonMxEstimator):
 
 class GPVARAdapter(_BaseGluonMxEstimator):
     name = "gluonts_gpvar"
-    PLUGIN_MANIFEST = GLUONTS_GPVAR_MANIFEST
     CONFIG_CLS = GPVARConfig
 
     def _load_estimator_class(self):

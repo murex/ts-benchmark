@@ -39,10 +39,8 @@ gluonts_deepvar = "ts_benchmark_official_adapters.plugin:build_gluonts_deepvar"
 gluonts_gpvar = "ts_benchmark_official_adapters.plugin:build_gluonts_gpvar"
 pytorchts_timegrad = "ts_benchmark_official_adapters.plugin:build_pytorchts_timegrad"
 
-[project.entry-points."ts_benchmark.model_manifests"]
-gluonts_deepvar = "ts_benchmark_official_adapters.plugin:get_gluonts_deepvar_manifest"
-gluonts_gpvar = "ts_benchmark_official_adapters.plugin:get_gluonts_gpvar_manifest"
-pytorchts_timegrad = "ts_benchmark_official_adapters.plugin:get_pytorchts_timegrad_manifest"
-
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ts_benchmark_official_adapters = ["ts_benchmark_plugin.toml"]

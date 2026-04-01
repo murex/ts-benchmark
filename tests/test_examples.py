@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ts_benchmark.model import ScenarioModel
-from ts_benchmark.model.catalog import ModelParameterSchema, ModelPluginManifest
 
 
 def _load_module(path: Path, module_name: str):
@@ -70,14 +69,9 @@ def test_plugin_example_import_smoke() -> None:
     )
 
     model = module.build_model()
-    manifest = module.get_plugin_manifest()
-    parameter_schema = module.get_parameter_schema()
 
     assert isinstance(model, ScenarioModel)
-    assert isinstance(manifest, ModelPluginManifest)
-    assert isinstance(parameter_schema, ModelParameterSchema)
-    assert manifest.name == "demo_gaussian_plugin"
-    assert [field.name for field in parameter_schema.fields] == ["ridge"]
+    assert module.build_model.__name__ == "build_model"
 
 
 def test_examples_do_not_reference_removed_api_names() -> None:
