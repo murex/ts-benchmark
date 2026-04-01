@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from .. import BENCHMARK_CATALOG_DIR
 from ..renderers import render_structured_value
 from ..services.configs import list_saved_benchmarks, load_config_dict
 from ..services.runs import load_run_artifacts
@@ -176,15 +177,55 @@ def _default_selected_benchmark(rows: list[dict[str, object]]) -> str | None:
         return None
     current_path = get_current_config_path()
     if current_path is not None:
+        current_path = current_path.expanduser().resolve()
         for row in rows:
-            if Path(row["path"]) == current_path:
+            if Path(str(row["path"])).expanduser().resolve() == current_path:
                 return str(row["name"])
     selected_run = get_selected_run_dir()
     if selected_run is not None:
+        selected_run = selected_run.expanduser().resolve()
         for row in rows:
-            if row.get("results_run_dir") and Path(str(row["results_run_dir"])) == selected_run:
+            if row.get("results_run_dir") and Path(str(row["results_run_dir"])).expanduser().resolve() == selected_run:
                 return str(row["name"])
     return str(rows[0]["name"])
+
+
+def _available_benchmark_rows() -> list[dict[str, object]]:
+    rows = [dict(row) for row in list_saved_benchmarks()]
+    seen_paths = {
+        Path(str(row["path"])).expanduser().resolve()
+        for row in rows
+    }
+    for row in list_saved_benchmarks(benchmark_dir=BENCHMARK_CATALOG_DIR):
+        path = Path(str(row["path"])).expanduser().resolve()
+        if path in seen_paths:
+            continue
+        rows.append(
+            {
+                **dict(row),
+                "origin": "saved",
+                "read_only": False,
+            }
+        )
+        seen_paths.add(path)
+    return rows
+
+
+def _benchmark_option_map(rows: list[dict[str, object]]) -> tuple[list[str], dict[str, dict[str, object]]]:
+    labels: list[str] = []
+    options: dict[str, dict[str, object]] = {}
+    for row in rows:
+        origin = str(row.get("origin") or "saved").strip().lower()
+        suffix = "official" if origin == "official" else "saved"
+        base_label = f"{row['name']} ({suffix})"
+        label = base_label
+        counter = 2
+        while label in options:
+            label = f"{base_label} [{counter}]"
+            counter += 1
+        labels.append(label)
+        options[label] = dict(row)
+    return labels, options
 
 
 def _metric_names(artifacts: dict[str, object], metrics: pd.DataFrame | None) -> list[str]:
@@ -598,22 +639,27 @@ def _render_model_debug_tab(artifacts: dict[str, object], selected_row: dict[str
 
 def render() -> None:
     st.header("Results Explorer")
-    st.caption("Inspect official benchmark outcomes, diagnostics, scenario previews, and technical run details.")
+    st.caption("Inspect benchmark outcomes, diagnostics, scenario previews, and technical run details.")
 
-    benchmark_rows = list_saved_benchmarks()
+    benchmark_rows = _available_benchmark_rows()
     if not benchmark_rows:
-        st.info("No official benchmarks are available yet.")
+        st.info("No benchmarks are available yet.")
         return
 
     default_benchmark = _default_selected_benchmark(benchmark_rows)
     if default_benchmark is None:
         st.info("No benchmark results are available yet.")
         return
-    benchmark_options = {str(row["name"]): row for row in benchmark_rows}
+    benchmark_labels, benchmark_options = _benchmark_option_map(benchmark_rows)
+    default_label = benchmark_labels[0]
+    for label, row in benchmark_options.items():
+        if str(row["name"]) == default_benchmark:
+            default_label = label
+            break
     selected_benchmark = st.selectbox(
         "Benchmark",
-        options=list(benchmark_options),
-        index=list(benchmark_options).index(default_benchmark),
+        options=benchmark_labels,
+        index=benchmark_labels.index(default_label),
     )
     selected_row = dict(benchmark_options[selected_benchmark])
     selected_run_raw = selected_row.get("results_run_dir")
