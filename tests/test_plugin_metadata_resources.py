@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from ts_benchmark.benchmark import load_benchmark_config
 from ts_benchmark.model.catalog import plugins
 from ts_benchmark.model.catalog.plugins import (
     MODEL_ENTRYPOINT_GROUP,
@@ -285,3 +286,88 @@ def test_official_adapters_use_packaged_toml_manifest(monkeypatch) -> None:
     assert schema is not None
     assert schema.schema_source == "config_dataclass"
     assert any(field.name == "hidden_size" and field.value_type == "int" for field in schema.fields)
+
+
+def test_loader_materializes_plugin_default_pipeline_when_pipeline_omitted(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _write_plugin_package(
+        tmp_path,
+        "loader_default_pipeline_plugin",
+        plugin_source="""
+def build_model(scale: float = 1.0):
+    return {"scale": scale}
+""".strip(),
+        toml_source="""
+[manifest]
+display_name = "Loader default pipeline plugin"
+default_pipeline = "minmax"
+""".strip(),
+    )
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+    _patch_entry_points(
+        monkeypatch,
+        model_entry_points=[
+            metadata.EntryPoint(
+                "loader_default_plugin",
+                "loader_default_pipeline_plugin.plugin:build_model",
+                MODEL_ENTRYPOINT_GROUP,
+            )
+        ],
+    )
+
+    clear_plugin_caches()
+    config = load_benchmark_config(
+        {
+            "version": "1.0",
+            "benchmark": {
+                "name": "loader_default_pipeline_smoke",
+                "dataset": {
+                    "provider": {
+                        "kind": "synthetic",
+                        "config": {
+                            "generator": "regime_switching_factor_sv",
+                            "params": {"n_assets": 2, "seed": 11},
+                        },
+                    },
+                    "schema": {"layout": "tensor", "frequency": "B"},
+                    "semantics": {},
+                    "metadata": {},
+                },
+                "protocol": {
+                    "kind": "forecast",
+                    "horizon": 2,
+                    "n_model_scenarios": 4,
+                    "n_reference_scenarios": 8,
+                    "forecast": {
+                        "train_size": 40,
+                        "test_size": 12,
+                        "context_length": 6,
+                        "eval_stride": 4,
+                        "train_stride": 1,
+                    },
+                },
+                "metrics": [{"name": "crps"}],
+                "models": [
+                    {
+                        "name": "loader_default_plugin",
+                        "reference": {"kind": "plugin", "value": "loader_default_plugin"},
+                        "params": {},
+                    }
+                ],
+            },
+            "run": {
+                "seed": 11,
+                "execution": {"scheduler": "auto"},
+                "output": {},
+            },
+        }
+    )
+
+    model = config.models[0]
+    assert model.pipeline.name == "minmax"
+    assert len(model.pipeline.steps) == 1
+    assert model.pipeline.steps[0].type == "min_max_scale"

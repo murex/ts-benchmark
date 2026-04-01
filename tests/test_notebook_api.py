@@ -816,6 +816,35 @@ def test_catalog_model_loads_reference_and_allows_pipeline_override(tmp_path: Pa
     assert overridden.pipeline_steps == []
 
 
+def test_catalog_model_uses_manifest_default_pipeline_when_none_saved(monkeypatch, tmp_path: Path) -> None:
+    model_dir = tmp_path / "model_catalog"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "plugin_model.json").write_text(
+        json.dumps(
+            {
+                "name": "plugin_model",
+                "reference": {"kind": "plugin", "value": "demo_plugin"},
+                "params": {},
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "ts_benchmark.notebook.api.resolve_default_pipeline_config",
+        lambda reference, default_name=None: PipelineConfig(
+            name="minmax",
+            steps=[{"type": "min_max_scale", "params": {"feature_min": 0.0, "feature_max": 1.0, "clip": False}}],
+        ),
+    )
+
+    loaded = catalog_model("plugin_model", model_dir=model_dir)
+
+    assert loaded.pipeline_name == "minmax"
+    assert loaded.pipeline_steps[0]["type"] == "min_max_scale"
+
+
 def test_save_dataset_definition_persists_notebook_dataset_spec(tmp_path: Path) -> None:
     csv_path = tmp_path / "returns.csv"
     _write_returns_csv(csv_path)

@@ -11,6 +11,8 @@ import streamlit as st
 
 from .. import BENCHMARK_CATALOG_DIR
 from ts_benchmark.metrics import available_metric_names, resolve_metric_configs
+from ts_benchmark.model.definition import ModelReferenceConfig
+from ts_benchmark.model.pipeline_defaults import resolve_default_pipeline_config
 
 from ..schema_forms import (
     render_model_params_editor,
@@ -186,13 +188,20 @@ def _dataset_summary_rows(dataset: dict[str, Any]) -> list[dict[str, str]]:
 
 def _model_from_catalog(name: str) -> dict[str, Any]:
     entry = load_catalog_model(name)
+    default_pipeline = resolve_default_pipeline_config(
+        reference=ModelReferenceConfig(
+            kind=str(dict(entry.get("reference") or {}).get("kind") or ""),
+            value=str(dict(entry.get("reference") or {}).get("value") or ""),
+        ),
+        default_name=str(entry.get("name") or name),
+    )
     return {
         "name": entry.get("name") or name,
         "description": entry.get("description") or "",
         "reference": dict(entry.get("reference") or {}),
         "params": dict(entry.get("params") or {}),
         "metadata": dict(entry.get("metadata") or {}),
-        "pipeline": {"name": "raw", "steps": []},
+        "pipeline": default_pipeline.to_builtin(),
         "execution": None,
     }
 

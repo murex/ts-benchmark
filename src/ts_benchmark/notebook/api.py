@@ -44,6 +44,7 @@ from ..model.definition import (
     pipeline_step_payload,
 )
 from ..model.catalog import get_model_plugin_info, list_model_plugins, resolve_model_plugin_parameter_schema
+from ..model.pipeline_defaults import pipeline_config_from_name, resolve_default_pipeline_config
 from ..run import BenchmarkRunArtifacts, run_benchmark_from_config
 from ..run.storage import dataset_summary
 from ..serialization import to_jsonable
@@ -457,13 +458,35 @@ def _dataset_config_from_spec(spec: NotebookDatasetSpec) -> DatasetConfig:
 
 def _coerce_pipeline_config(
     *,
-    pipeline_name: str = "raw",
+    pipeline_name: str | None = "raw",
     pipeline_steps: Sequence[Mapping[str, Any]] | None = None,
 ) -> PipelineConfig:
+    if pipeline_steps is None:
+        return pipeline_config_from_name(pipeline_name)
     return PipelineConfig(
         name=str(pipeline_name or "raw"),
         steps=[pipeline_step_from_object(step) for step in list(pipeline_steps or [])],
     )
+
+
+def _resolved_notebook_pipeline(
+    *,
+    reference_kind: str,
+    reference_value: str,
+    name: str,
+    pipeline: str | None,
+    steps: Sequence[Mapping[str, Any]] | None,
+) -> tuple[str, list[Mapping[str, Any] | Any]]:
+    if steps is not None:
+        return str(pipeline or "raw"), list(steps)
+    if pipeline is not None:
+        config = pipeline_config_from_name(pipeline)
+        return config.name, [pipeline_step_payload(step) for step in config.steps]
+    config = resolve_default_pipeline_config(
+        ModelReferenceConfig(kind=reference_kind, value=reference_value),
+        default_name=name,
+    )
+    return config.name, [pipeline_step_payload(step) for step in config.steps]
 
 
 def _mapping_to_notebook_model_spec(model: Mapping[str, Any]) -> NotebookModelSpec:
@@ -480,13 +503,21 @@ def _mapping_to_notebook_model_spec(model: Mapping[str, Any]) -> NotebookModelSp
             )
         reference_kind = str(reference.get("kind") or "").strip()
         reference_value = str(reference.get("value") or "").strip()
+    pipeline_block = dict(model.get("pipeline") or {})
+    resolved_pipeline_name, resolved_pipeline_steps = _resolved_notebook_pipeline(
+        reference_kind=reference_kind,
+        reference_value=reference_value,
+        name=str(model.get("name") or ""),
+        pipeline=None if "pipeline" not in model else pipeline_block.get("name"),
+        steps=None if "pipeline" not in model or "steps" not in pipeline_block else list(pipeline_block.get("steps") or []),
+    )
     return NotebookModelSpec(
         name=str(model.get("name") or ""),
         reference_kind=reference_kind,
         reference_value=reference_value,
         params=dict(model.get("params") or {}),
-        pipeline_name=str(dict(model.get("pipeline") or {}).get("name", "raw")),
-        pipeline_steps=list(dict(model.get("pipeline") or {}).get("steps") or []),
+        pipeline_name=resolved_pipeline_name,
+        pipeline_steps=resolved_pipeline_steps,
         execution=model.get("execution"),
         description=None if model.get("description") is None else str(model.get("description")),
         metadata=dict(model.get("metadata") or {}),
@@ -515,7 +546,7 @@ def _normalize_notebook_model_spec(model: NotebookModelSpec | Mapping[str, Any])
         reference_kind=reference_kind,
         reference_value=reference_value,
         params=dict(spec.params),
-        pipeline_name=str(spec.pipeline_name or "raw"),
+        pipeline_name=str(spec.pipeline_name or ""),
         pipeline_steps=list(spec.pipeline_steps),
         execution=_coerce_execution_config(spec.execution, default_mode="inprocess"),
         description=None if spec.description is None else str(spec.description),
@@ -771,13 +802,20 @@ def entrypoint_model(
 
     merged_params = dict(params or {})
     merged_params.update(param_overrides)
+    resolved_pipeline_name, resolved_pipeline_steps = _resolved_notebook_pipeline(
+        reference_kind="entrypoint",
+        reference_value=str(entrypoint),
+        name=str(name),
+        pipeline=pipeline,
+        steps=steps,
+    )
     return NotebookModelSpec(
         name=str(name),
         reference_kind="entrypoint",
         reference_value=str(entrypoint),
         params=merged_params,
-        pipeline_name=str(pipeline or "raw"),
-        pipeline_steps=list(steps or []),
+        pipeline_name=resolved_pipeline_name,
+        pipeline_steps=resolved_pipeline_steps,
         execution=_coerce_execution_config(execution, default_mode="inprocess"),
         description=description,
         metadata=dict(metadata or {}),
@@ -817,8 +855,23 @@ def catalog_model(
         base_pipeline_name = str(stored_pipeline.get("name", "raw") or "raw")
         base_pipeline_steps = list(stored_pipeline.get("steps") or [])
     else:
-        base_pipeline_name = "raw"
-        base_pipeline_steps = []
+        default_pipeline = resolve_default_pipeline_config(
+            ModelReferenceConfig(
+                kind=str(dict(payload.get("reference") or {}).get("kind") or ""),
+                value=str(dict(payload.get("reference") or {}).get("value") or ""),
+            ),
+            default_name=str(payload.get("name") or name),
+        )
+        base_pipeline_name = default_pipeline.name
+        base_pipeline_steps = [pipeline_step_payload(step) for step in default_pipeline.steps]
+
+    resolved_pipeline_name, resolved_pipeline_steps = _resolved_notebook_pipeline(
+        reference_kind=str(dict(payload.get("reference") or {}).get("kind") or ""),
+        reference_value=str(dict(payload.get("reference") or {}).get("value") or ""),
+        name=str(payload.get("name") or name),
+        pipeline=pipeline if pipeline is not None else base_pipeline_name,
+        steps=steps if steps is not None else base_pipeline_steps,
+    )
 
     merged_params = dict(payload.get("params") or {})
     merged_params.update(dict(params or {}))
@@ -832,8 +885,8 @@ def catalog_model(
         reference_kind=str(dict(payload.get("reference") or {}).get("kind") or ""),
         reference_value=str(dict(payload.get("reference") or {}).get("value") or ""),
         params=merged_params,
-        pipeline_name=str(pipeline if pipeline is not None else base_pipeline_name),
-        pipeline_steps=list(steps) if steps is not None else base_pipeline_steps,
+        pipeline_name=resolved_pipeline_name,
+        pipeline_steps=resolved_pipeline_steps,
         execution=_coerce_execution_config(
             stored_execution if execution is None else execution,
             default_mode="inprocess",

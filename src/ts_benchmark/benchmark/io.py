@@ -29,6 +29,7 @@ from ..model.definition import (
     pipeline_step_from_object,
     pipeline_step_payload,
 )
+from ..model.pipeline_defaults import pipeline_config_from_name, resolve_default_pipeline_config
 from ..run.definition import (
     DiagnosticsConfig,
     FunctionalSmokeConfig,
@@ -202,11 +203,11 @@ def validate_benchmark_config(config_dict: dict[str, Any]) -> None:
 
         pipeline = _as_mapping(model.get("pipeline"), field_name=f"benchmark.models[{model['name']}].pipeline")
         pipeline_name = str(pipeline.get("name") or "").strip()
-        if not pipeline_name:
-            raise ValueError(f"Model '{model['name']}' must define pipeline.name.")
         steps = pipeline.get("steps")
-        if steps is None or not isinstance(steps, list):
-            raise ValueError(f"Model '{model['name']}' must define pipeline.steps as a list.")
+        if steps is not None and not pipeline_name:
+            raise ValueError(f"Model '{model['name']}' must define pipeline.name when pipeline.steps are provided.")
+        if steps is not None and not isinstance(steps, list):
+            raise ValueError(f"Model '{model['name']}' must define pipeline.steps as a list when provided.")
 
         params_block = _as_mapping(model.get("params"), field_name=f"benchmark.models[{model['name']}].params")
         forbidden = sorted(BENCHMARK_OWNED_PROTOCOL_FIELDS & set(params_block))
@@ -273,6 +274,7 @@ def _parse_execution_config(raw: Any, *, field_name: str) -> ModelExecutionConfi
 def _parse_model_config(item: Mapping[str, Any], *, default_execution: ModelExecutionConfig | None = None) -> ModelConfig:
     model = _as_mapping(item, field_name="benchmark.models[]")
     reference = _as_mapping(model["reference"], field_name="benchmark.models[].reference")
+    reference_config = ModelReferenceConfig(**reference)
     params = _as_mapping(model.get("params"), field_name="benchmark.models[].params")
     pipeline = _as_mapping(model.get("pipeline"), field_name="benchmark.models[].pipeline")
     meta = _as_mapping(model.get("metadata"), field_name="benchmark.models[].metadata")
@@ -280,13 +282,11 @@ def _parse_model_config(item: Mapping[str, Any], *, default_execution: ModelExec
     if execution is None and default_execution is not None and default_execution.mode == "subprocess":
         execution = copy.deepcopy(default_execution)
 
-    return ModelConfig(
-        name=str(model["name"]),
-        description=model.get("description"),
-        reference=ModelReferenceConfig(**reference),
-        params=params,
-        pipeline=PipelineConfig(
-            name=str(pipeline.get("name", "raw")),
+    pipeline_name = str(pipeline.get("name") or "").strip()
+    raw_steps = pipeline.get("steps")
+    if pipeline_name and raw_steps is not None:
+        pipeline_config = PipelineConfig(
+            name=pipeline_name,
             steps=[
                 pipeline_step_from_object(
                     {
@@ -297,9 +297,23 @@ def _parse_model_config(item: Mapping[str, Any], *, default_execution: ModelExec
                         ),
                     }
                 )
-                for step in list(pipeline.get("steps", []))
+                for step in list(raw_steps or [])
             ],
-        ),
+        )
+    elif pipeline_name:
+        pipeline_config = pipeline_config_from_name(pipeline_name)
+    else:
+        pipeline_config = resolve_default_pipeline_config(
+            reference_config,
+            default_name=str(model.get("name") or ""),
+        )
+
+    return ModelConfig(
+        name=str(model["name"]),
+        description=model.get("description"),
+        reference=reference_config,
+        params=params,
+        pipeline=pipeline_config,
         metadata=JsonObject(meta),
         execution=execution,
     )
