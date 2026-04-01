@@ -176,3 +176,39 @@ default = 1.5
     assert [(field.name, field.value_type, field.default) for field in schema.fields] == [
         ("alpha", "float", 1.5)
     ]
+
+
+def test_example_plugin_uses_packaged_toml_metadata(monkeypatch) -> None:
+    example_src = (
+        ROOT
+        / "plugin_examples"
+        / "eqbench_demo_gaussian_plugin"
+        / "src"
+    )
+    monkeypatch.syspath_prepend(str(example_src))
+    importlib.invalidate_caches()
+    _patch_entry_points(
+        monkeypatch,
+        model_entry_points=[
+            metadata.EntryPoint(
+                "demo_gaussian_plugin",
+                "eqbench_demo_gaussian_plugin.plugin:build_model",
+                MODEL_ENTRYPOINT_GROUP,
+            )
+        ],
+    )
+
+    clear_plugin_caches()
+    manifest = resolve_model_plugin_manifest("demo_gaussian_plugin")
+    schema = resolve_model_plugin_parameter_schema("demo_gaussian_plugin")
+
+    assert manifest is not None
+    assert manifest.display_name == "Demo Gaussian plugin"
+    assert manifest.default_pipeline == "raw"
+    assert manifest.manifest_source == "resource_file"
+
+    assert schema is not None
+    assert schema.schema_source == "resource_file"
+    assert [(field.name, field.value_type, field.default) for field in schema.fields] == [
+        ("ridge", "float", 1e-06)
+    ]

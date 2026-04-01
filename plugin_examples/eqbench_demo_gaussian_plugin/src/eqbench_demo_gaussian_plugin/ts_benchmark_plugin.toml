@@ -1,0 +1,30 @@
+[manifest]
+display_name = "Demo Gaussian plugin"
+version = "0.1.0"
+family = "gaussian"
+description = "Minimal external plugin example that samples Gaussian future returns."
+runtime_device_hints = ["cpu"]
+supported_dataset_sources = ["synthetic", "csv", "parquet"]
+required_input = "returns"
+default_pipeline = "raw"
+required_pipeline = "raw"
+tags = ["example", "plugin", "gaussian"]
+notes = "Intended as a developer template for external benchmark integrations."
+
+[manifest.capabilities]
+multivariate = true
+probabilistic_sampling = true
+benchmark_protocol_contract = true
+explicit_preprocessing = true
+uses_benchmark_device = false
+
+[parameters]
+name = "demo_gaussian_plugin"
+
+[[parameters.fields]]
+name = "ridge"
+value_type = "float"
+required = false
+default = 1.0e-6
+annotation = "float"
+description = "Diagonal ridge added to the empirical covariance estimate."

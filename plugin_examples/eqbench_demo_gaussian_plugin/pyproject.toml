@@ -12,8 +12,8 @@ dependencies = ["numpy>=1.24", "ts-benchmark>=0.4.0"]
 [project.entry-points."ts_benchmark.models"]
 demo_gaussian_plugin = "eqbench_demo_gaussian_plugin.plugin:build_model"
 
-[project.entry-points."ts_benchmark.model_manifests"]
-demo_gaussian_plugin = "eqbench_demo_gaussian_plugin.plugin:get_plugin_manifest"
-
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+eqbench_demo_gaussian_plugin = ["ts_benchmark_plugin.toml"]
