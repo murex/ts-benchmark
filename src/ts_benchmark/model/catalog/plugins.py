@@ -4,9 +4,10 @@ The recommended way to benchmark a model under active development is to
 keep it in its own package/repository and expose a factory through the
 `ts_benchmark.models` entry-point group.
 
-To make plugin discovery useful in the CLI and UI, plugins can also
-publish a lightweight manifest through the
-`ts_benchmark.model_manifests` entry-point group.
+Plugin metadata can be provided either through a packaged
+`ts_benchmark_plugin.toml` resource or, for legacy integrations, through
+the `ts_benchmark.model_manifests` entry-point group and builder
+attributes.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any, Callable, Iterable, Mapping, get_args, get_origin
 from ..builtins.historical_bootstrap import HistoricalBootstrapModel
 from ..builtins.stochastic_vol_bootstrap import StochasticVolatilityBootstrapModel
 from ...serialization import to_jsonable
+from .plugin_metadata import PluginResourceMetadata, load_plugin_resource_metadata
 
 MODEL_ENTRYPOINT_GROUP = "ts_benchmark.models"
 MODEL_MANIFEST_ENTRYPOINT_GROUP = "ts_benchmark.model_manifests"
@@ -622,17 +624,42 @@ def _call_manifest_provider(provider: Any) -> Any:
 @lru_cache(maxsize=1)
 def _entrypoint_manifests() -> dict[str, ModelPluginManifest]:
     manifests: dict[str, ModelPluginManifest] = {}
+    resource_metadata = _entrypoint_resource_metadata()
+    legacy_manifests: dict[str, ModelPluginManifest] = {}
     for ep in _manifest_entry_points().values():
         package, version = _entrypoint_dist_info(ep)
         provider = ep.load()
         manifest_value = _call_manifest_provider(provider)
-        manifests[ep.name] = normalize_model_plugin_manifest(
+        legacy_manifests[ep.name] = normalize_model_plugin_manifest(
             manifest_value,
             name=ep.name,
             default_version=version,
             default_source="entry_point",
         )
+    for ep in _model_entry_points().values():
+        package, version = _entrypoint_dist_info(ep)
+        resource_entry = resource_metadata.get(ep.name)
+        if resource_entry is not None and resource_entry.manifest is not None:
+            manifests[ep.name] = normalize_model_plugin_manifest(
+                resource_entry.manifest,
+                name=ep.name,
+                default_version=version,
+                default_source="resource_file",
+            )
+            continue
+        if ep.name in legacy_manifests:
+            manifests[ep.name] = legacy_manifests[ep.name]
     return manifests
+
+
+@lru_cache(maxsize=1)
+def _entrypoint_resource_metadata() -> dict[str, PluginResourceMetadata]:
+    metadata_by_name: dict[str, PluginResourceMetadata] = {}
+    for ep in _model_entry_points().values():
+        resource_metadata = load_plugin_resource_metadata(ep)
+        if resource_metadata is not None:
+            metadata_by_name[ep.name] = resource_metadata
+    return metadata_by_name
 
 
 
@@ -795,6 +822,13 @@ def resolve_model_plugin_manifest(name: str) -> ModelPluginManifest | None:
 
 
 def resolve_model_plugin_parameter_schema(name: str) -> ModelParameterSchema | None:
+    resource_metadata = _entrypoint_resource_metadata().get(name)
+    if resource_metadata is not None and resource_metadata.parameter_schema is not None:
+        return normalize_model_parameter_schema(
+            resource_metadata.parameter_schema,
+            name=name,
+            default_source="resource_file",
+        )
     builder = resolve_model_plugin(name)
     return extract_model_parameter_schema(builder, default_name=name)
 
@@ -816,4 +850,5 @@ def clear_plugin_caches() -> None:
     _entrypoint_model_factories.cache_clear()
     _model_entry_points.cache_clear()
     _manifest_entry_points.cache_clear()
+    _entrypoint_resource_metadata.cache_clear()
     _entrypoint_manifests.cache_clear()
