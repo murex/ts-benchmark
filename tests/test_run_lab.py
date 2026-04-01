@@ -54,3 +54,43 @@ def test_load_selected_benchmark_uses_row_path(monkeypatch, tmp_path: Path) -> N
     assert current["benchmark"]["name"] == "Saved"
     assert captured["path"] == selected_path.resolve()
     assert captured["rerun"] is True
+
+
+def test_attach_run_results_updates_local_saved_benchmark_metadata(monkeypatch, tmp_path: Path) -> None:
+    benchmark_path = tmp_path / "catalog" / "saved.json"
+    previous_results_dir = tmp_path / "previous"
+    source_run_dir = tmp_path / "run"
+    merged_results_dir = tmp_path / "merged"
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(run_lab, "BENCHMARK_CATALOG_DIR", benchmark_path.parent)
+    monkeypatch.setattr(run_lab, "materialize_benchmark_results", lambda **kwargs: merged_results_dir)
+    monkeypatch.setattr(run_lab, "load_run_artifacts", lambda path: {"summary": {"models": ["sbts"]}, "run_dir": str(path)})
+    monkeypatch.setattr(
+        run_lab,
+        "update_saved_benchmark_results",
+        lambda name_or_path, run_dir, *, summary=None, benchmark_dir=None: captured.update(
+            {
+                "name_or_path": name_or_path,
+                "run_dir": run_dir,
+                "summary": summary,
+                "benchmark_dir": benchmark_dir,
+            }
+        ),
+    )
+
+    run_info, artifacts = run_lab._attach_run_results(
+        {
+            "benchmark_path": str(benchmark_path),
+            "output_dir": str(source_run_dir),
+        },
+        benchmark_config={"benchmark": {"name": "Saved"}},
+        previous_results_dir=previous_results_dir,
+    )
+
+    assert artifacts["summary"] == {"models": ["sbts"]}
+    assert run_info["latest_results_dir"] == str(merged_results_dir)
+    assert captured["name_or_path"] == benchmark_path
+    assert captured["run_dir"] == merged_results_dir
+    assert captured["summary"] == {"models": ["sbts"]}
+    assert captured["benchmark_dir"] == benchmark_path.parent

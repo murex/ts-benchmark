@@ -22,6 +22,7 @@ from ..services.configs import (
     build_effective_config,
     list_saved_benchmarks,
     load_config_dict,
+    update_saved_benchmark_results,
     validate_effective_config,
 )
 from ..services.environment import detect_devices
@@ -223,6 +224,14 @@ def _attach_run_results(
         previous_results_dir=None if previous_results_dir is None else Path(str(previous_results_dir)),
     )
     merged_artifacts = load_run_artifacts(merged_results_dir)
+    benchmark_path_obj = Path(str(benchmark_path)).expanduser().resolve()
+    if benchmark_path_obj.parent == BENCHMARK_CATALOG_DIR.resolve():
+        update_saved_benchmark_results(
+            benchmark_path_obj,
+            merged_results_dir,
+            summary=dict(merged_artifacts.get("summary") or {}),
+            benchmark_dir=BENCHMARK_CATALOG_DIR,
+        )
     updated = dict(run_info)
     updated["results_attached"] = True
     updated["latest_results_dir"] = str(merged_results_dir)
