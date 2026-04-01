@@ -10,7 +10,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from .. import OUTPUT_DIR
+from .. import BENCHMARK_CATALOG_DIR, OUTPUT_DIR
 from ..renderers import render_status_badge, render_structured_value
 from ..schema_forms import (
     render_benchmark_form,
@@ -21,7 +21,7 @@ from ..schema_forms import (
 from ..services.configs import (
     build_effective_config,
     list_saved_benchmarks,
-    load_saved_benchmark,
+    load_config_dict,
     validate_effective_config,
 )
 from ..services.environment import detect_devices
@@ -50,6 +50,27 @@ from ..state import (
 RUN_LAB_BENCHMARK_KEY = "run_lab.benchmark"
 RUN_LAB_MODEL_SELECTION_KEY = "run_lab.models"
 RUN_LAB_MODEL_SIGNATURE_KEY = "run_lab.model_signature"
+
+
+def _available_benchmark_rows() -> list[dict[str, Any]]:
+    rows = [dict(row) for row in list_saved_benchmarks()]
+    seen_paths = {
+        Path(str(row["path"])).expanduser().resolve()
+        for row in rows
+    }
+    for row in list_saved_benchmarks(benchmark_dir=BENCHMARK_CATALOG_DIR):
+        path = Path(str(row["path"])).expanduser().resolve()
+        if path in seen_paths:
+            continue
+        rows.append(
+            {
+                **dict(row),
+                "origin": "saved",
+                "read_only": False,
+            }
+        )
+        seen_paths.add(path)
+    return rows
 
 
 def _render_section_heading(title: str, *, caption: str | None = None, level: str = "section") -> None:
@@ -126,38 +147,52 @@ def _reset_run_lab_state(*, preserve: set[str] | None = None) -> None:
 
 
 def _selected_benchmark_row() -> dict[str, Any] | None:
-    rows = list_saved_benchmarks()
+    rows = _available_benchmark_rows()
     if not rows:
         return None
-    options = {str(row["name"]): row for row in rows}
+    labels: list[str] = []
+    options: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        origin = str(row.get("origin") or "saved").strip().lower()
+        suffix = "official" if origin == "official" else "saved"
+        base_label = f"{row['name']} ({suffix})"
+        label = base_label
+        path = Path(str(row["path"]))
+        counter = 2
+        while label in options:
+            label = f"{base_label} [{counter}]"
+            counter += 1
+        labels.append(label)
+        options[label] = row
     current_path = get_current_config_path()
-    default_name = str(rows[0]["name"])
+    default_label = labels[0]
     if current_path is not None:
-        for row in rows:
-            if Path(row["path"]) == current_path:
-                default_name = str(row["name"])
+        current_resolved = current_path.expanduser().resolve()
+        for label, row in options.items():
+            if Path(str(row["path"])).expanduser().resolve() == current_resolved:
+                default_label = label
                 break
     elif RUN_LAB_BENCHMARK_KEY in st.session_state:
         candidate = str(st.session_state[RUN_LAB_BENCHMARK_KEY])
         if candidate in options:
-            default_name = candidate
+            default_label = candidate
     selected_name = st.selectbox(
         "Benchmark",
-        options=list(options),
-        index=list(options).index(default_name),
+        options=labels,
+        index=labels.index(default_label),
         key=RUN_LAB_BENCHMARK_KEY,
     )
     return dict(options[str(selected_name)])
 
 
 def _load_selected_benchmark(row: dict[str, Any]) -> dict[str, Any]:
-    selected_path = Path(row["path"])
+    selected_path = Path(str(row["path"])).expanduser().resolve()
     current_path = get_current_config_path()
     current = get_current_config()
-    if current_path is not None and current_path == selected_path and current:
+    if current_path is not None and current_path.expanduser().resolve() == selected_path and current:
         return current
     _reset_run_lab_state(preserve={RUN_LAB_BENCHMARK_KEY})
-    current = load_saved_benchmark(str(row["name"]))
+    current = load_config_dict(selected_path)
     set_current_config(current)
     set_current_config_path(selected_path)
     set_current_run(None)
@@ -197,7 +232,7 @@ def _attach_run_results(
 
 def render() -> None:
     st.header("Run Lab")
-    st.caption("Select an official benchmark, choose the models to run, optionally adjust model params, and inspect its latest results.")
+    st.caption("Select a benchmark, choose the models to run, optionally adjust model params, and inspect its latest results.")
 
     benchmark_row = _selected_benchmark_row()
     if benchmark_row is None:
