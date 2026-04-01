@@ -11,14 +11,23 @@ from collections.abc import Mapping
 
 import jsonschema
 
-from ..dataset.definition import DatasetConfig, DatasetProviderConfig
+from ..dataset.definition import (
+    CsvDatasetProviderConfig,
+    DatasetConfig,
+    DatasetProviderConfig,
+    ParquetDatasetProviderConfig,
+    SyntheticDatasetProviderConfig,
+    dataset_provider_from_mapping,
+)
 from ..metrics.definition import BUILTIN_METRIC_DEFINITIONS, resolve_metric_configs
 from ..model.definition import (
     ModelConfig,
     ModelExecutionConfig,
     ModelReferenceConfig,
     PipelineConfig,
-    PipelineStepConfig,
+    model_params_to_builtin,
+    pipeline_step_from_object,
+    pipeline_step_payload,
 )
 from ..run.definition import (
     DiagnosticsConfig,
@@ -229,15 +238,11 @@ def _read_config_source(config_or_path: str | Path | dict[str, Any]) -> tuple[Pa
 
 def _parse_dataset_config(dataset_block: Mapping[str, Any]) -> DatasetConfig:
     schema_block = _as_mapping(dataset_block.get("schema"), field_name="benchmark.dataset.schema")
-    provider_block = _as_mapping(dataset_block["provider"], field_name="benchmark.dataset.provider")
     return DatasetConfig(
         name=dataset_block.get("name"),
         description=dataset_block.get("description"),
-        provider=DatasetProviderConfig(
-            kind=str(provider_block.get("kind")),
-            config=JsonObject(
-                _as_mapping(provider_block.get("config"), field_name="benchmark.dataset.provider.config")
-            ),
+        provider=dataset_provider_from_mapping(
+            _as_mapping(dataset_block["provider"], field_name="benchmark.dataset.provider")
         ),
         layout=str(schema_block.get("layout", "wide")),
         time_column=schema_block.get("time_column"),
@@ -279,20 +284,20 @@ def _parse_model_config(item: Mapping[str, Any], *, default_execution: ModelExec
         name=str(model["name"]),
         description=model.get("description"),
         reference=ModelReferenceConfig(**reference),
-        params=JsonObject(params),
+        params=params,
         pipeline=PipelineConfig(
             name=str(pipeline.get("name", "raw")),
             steps=[
-                PipelineStepConfig(
-                    type=str(_as_mapping(step, field_name="benchmark.models[].pipeline.steps[]").get("type", "")),
-                    params=JsonObject(
-                        _as_mapping(
+                pipeline_step_from_object(
+                    {
+                        "type": str(_as_mapping(step, field_name="benchmark.models[].pipeline.steps[]").get("type", "")),
+                        "params": _as_mapping(
                             _as_mapping(step, field_name="benchmark.models[].pipeline.steps[]").get("params"),
                             field_name="benchmark.models[].pipeline.steps[].params",
-                        )
-                    ),
+                        ),
+                    }
                 )
-                for step in pipeline.get("steps", [])
+                for step in list(pipeline.get("steps", []))
             ],
         ),
         metadata=JsonObject(meta),
@@ -359,7 +364,10 @@ def _dump_dataset_config(dataset: DatasetConfig) -> dict[str, Any]:
     return {
         "name": dataset.name,
         "description": dataset.description,
-        "provider": to_jsonable(dataset.provider),
+        "provider": {
+            "kind": str(dataset.provider.kind),
+            "config": dataset.provider.config_payload(),
+        },
         "schema": {
             "layout": dataset.layout,
             "time_column": dataset.time_column,
@@ -396,8 +404,11 @@ def _dump_model_config(model: ModelConfig, *, default_execution: ModelExecutionC
         "name": model.name,
         "description": model.description,
         "reference": to_jsonable(model.reference),
-        "params": to_jsonable(model.params),
-        "pipeline": to_jsonable(model.pipeline),
+        "params": model_params_to_builtin(model.params),
+        "pipeline": {
+            "name": model.pipeline.name,
+            "steps": [pipeline_step_payload(step) for step in model.pipeline.steps],
+        },
         "metadata": to_jsonable(model.metadata),
     }
     if model.execution is not None and not _execution_configs_match(model.execution, default_execution):

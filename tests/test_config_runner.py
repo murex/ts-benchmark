@@ -214,7 +214,7 @@ def test_load_config_and_pipeline_smoke() -> None:
     )
     assert config.version == "1.0"
     assert config.dataset.provider.kind == "synthetic"
-    assert config.dataset.provider.config["generator"] == "regime_switching_factor_sv"
+    assert config.dataset.provider.generator == "regime_switching_factor_sv"
     assert config.protocol.train_stride == 1
     pipeline = build_pipeline_from_config(
         "std",

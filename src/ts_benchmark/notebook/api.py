@@ -26,21 +26,30 @@ import pandas as pd
 
 from ..benchmark import BenchmarkConfig, dump_benchmark_config, load_benchmark_config, resolve_benchmark_reference
 from ..benchmark.protocol import protocol_config_payload
-from ..dataset.definition import DatasetConfig, DatasetProviderConfig
-from ..dataset.factory import build_dataset
+from ..dataset.definition import (
+    CsvDatasetProviderConfig,
+    DatasetConfig,
+    ParquetDatasetProviderConfig,
+    SyntheticDatasetProviderConfig,
+)
+from ..dataset.factory import GENERATOR_REGISTRY, build_dataset
+from ..dataset.providers.synthetic import RegimeSwitchingFactorSVConfig
 from ..dataset.providers.tabular import load_returns_frame
 from ..model.definition import (
     ModelConfig,
     ModelExecutionConfig,
     ModelReferenceConfig,
     PipelineConfig,
-    PipelineStepConfig,
+    pipeline_step_from_object,
+    pipeline_step_payload,
 )
+from ..model.catalog import get_model_plugin_info, list_model_plugins, resolve_model_plugin_parameter_schema
 from ..run import BenchmarkRunArtifacts, run_benchmark_from_config
 from ..run.storage import dataset_summary
 from ..serialization import to_jsonable
 from ..utils import JsonObject, StringMap
 from ..ui.services.datasets import save_dataset_definition as _save_dataset_definition
+from ..ui.services.model_catalog import load_catalog_model as _load_catalog_model
 from ..ui.services.model_catalog import list_saved_catalog_models as _list_saved_catalog_models
 from ..ui.services.model_catalog import save_catalog_model as _save_catalog_model
 from ..ui.services.model_catalog import saved_model_paths as _saved_model_paths
@@ -119,10 +128,12 @@ class NotebookModelSpec:
 
 @dataclass(frozen=True)
 class NotebookDatasetSpec:
-    """Notebook-side dataset declaration for tabular CSV/Parquet sources."""
+    """Notebook-side dataset declaration for tabular or synthetic sources."""
 
     source: str
-    path: str
+    path: str | None = None
+    generator: str | None = None
+    preview_n_points: int | None = None
     name: str | None = None
     description: str | None = None
     layout: str = "wide"
@@ -159,6 +170,17 @@ class NotebookAdapterEnv:
     @property
     def execution(self) -> ModelExecutionConfig:
         return ModelExecutionConfig(mode="subprocess", venv=str(self.venv_dir))
+
+
+def _coerce_mapping_payload(value: Mapping[str, Any] | Any | None) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    serialized = to_jsonable(value)
+    if isinstance(serialized, Mapping):
+        return dict(serialized)
+    raise TypeError("Expected a mapping-like object.")
 
 
 def _coerce_execution_config(
@@ -219,6 +241,25 @@ def _pip_install_command(
     else:
         command.append(target)
     return command
+
+
+def list_models() -> dict[str, dict[str, Any]]:
+    """Return the built-in and discovered plugin models available to notebooks."""
+
+    return list_model_plugins()
+
+
+def model_info(name: str) -> dict[str, Any]:
+    """Return notebook-friendly metadata for one supported built-in or plugin model."""
+
+    return to_jsonable(get_model_plugin_info(str(name)))
+
+
+def model_parameter_schema(name: str) -> dict[str, Any] | None:
+    """Return the parameter schema for a supported built-in or plugin model."""
+
+    schema = resolve_model_plugin_parameter_schema(str(name))
+    return None if schema is None else to_jsonable(schema)
 
 
 def _optional_dependencies_from_pyproject(root: str | Path, extra_name: str) -> list[str]:
@@ -285,7 +326,13 @@ def _normalize_notebook_dataset_spec(dataset: NotebookDatasetSpec | Mapping[str,
     spec = (
         NotebookDatasetSpec(
             source=str(dataset.get("source") or dataset.get("kind") or ""),
-            path=str(dataset.get("path") or ""),
+            path=None if dataset.get("path") is None else str(dataset.get("path")),
+            generator=None if dataset.get("generator") is None else str(dataset.get("generator")),
+            preview_n_points=(
+                None
+                if dataset.get("preview_n_points") is None and dataset.get("n_points") is None
+                else int(dataset.get("preview_n_points", dataset.get("n_points")))
+            ),
             name=None if dataset.get("name") is None else str(dataset.get("name")),
             description=None if dataset.get("description") is None else str(dataset.get("description")),
             layout=str(dataset.get("layout", "wide") or "wide"),
@@ -295,9 +342,9 @@ def _normalize_notebook_dataset_spec(dataset: NotebookDatasetSpec | Mapping[str,
             series_id_columns=tuple(str(item) for item in list(dataset.get("series_id_columns") or [])),
             feature_columns=tuple(str(item) for item in list(dataset.get("feature_columns") or [])),
             static_feature_columns=tuple(str(item) for item in list(dataset.get("static_feature_columns") or [])),
-            provider_params=dict(dataset.get("provider_params") or dataset.get("params") or {}),
-            semantics=dict(dataset.get("semantics") or {}),
-            metadata=dict(dataset.get("metadata") or {}),
+            provider_params=_coerce_mapping_payload(dataset.get("provider_params") or dataset.get("params")),
+            semantics=_coerce_mapping_payload(dataset.get("semantics")),
+            metadata=_coerce_mapping_payload(dataset.get("metadata")),
         )
         if isinstance(dataset, Mapping)
         else dataset
@@ -305,14 +352,31 @@ def _normalize_notebook_dataset_spec(dataset: NotebookDatasetSpec | Mapping[str,
     if not isinstance(spec, NotebookDatasetSpec):
         raise TypeError("with_dataset must be a NotebookDatasetSpec or mapping.")
     source = str(spec.source).strip().lower()
-    if source not in {"csv", "parquet"}:
-        raise ValueError(f"Notebook dataset source must be 'csv' or 'parquet', got '{spec.source}'.")
-    path = str(spec.path).strip()
-    if not path:
-        raise ValueError("Notebook dataset specs must define a non-empty path.")
+    if source not in {"csv", "parquet", "synthetic"}:
+        raise ValueError(
+            f"Notebook dataset source must be 'csv', 'parquet', or 'synthetic', got '{spec.source}'."
+        )
+    path = None if spec.path is None else str(spec.path).strip()
+    generator = None if spec.generator is None else str(spec.generator).strip()
+    preview_n_points = spec.preview_n_points
+    if source in {"csv", "parquet"} and not path:
+        raise ValueError("Tabular notebook dataset specs must define a non-empty path.")
+    if source == "synthetic":
+        if not generator:
+            provider_generator = spec.provider_params.get("generator")
+            if provider_generator is not None:
+                generator = str(provider_generator).strip()
+        if not generator:
+            raise ValueError("Synthetic notebook dataset specs must define a non-empty generator.")
+        if preview_n_points is None:
+            preview_n_points = 100
+        if preview_n_points < 1:
+            raise ValueError("Synthetic notebook dataset preview_n_points must be positive.")
     return NotebookDatasetSpec(
         source=source,
         path=path,
+        generator=generator,
+        preview_n_points=preview_n_points,
         name=None if spec.name is None else str(spec.name),
         description=None if spec.description is None else str(spec.description),
         layout=str(spec.layout or "wide"),
@@ -330,15 +394,54 @@ def _normalize_notebook_dataset_spec(dataset: NotebookDatasetSpec | Mapping[str,
 
 def _dataset_config_from_spec(spec: NotebookDatasetSpec) -> DatasetConfig:
     provider_params = dict(spec.provider_params)
-    provider_params["path"] = str(spec.path)
-    if spec.layout == "long" and spec.target_columns and "value_column" not in provider_params:
-        provider_params["value_column"] = str(spec.target_columns[0])
+    if spec.source == "synthetic":
+        provider_config = {
+            "generator": str(spec.generator),
+            "params": provider_params,
+        }
+    else:
+        provider_params["path"] = str(spec.path)
+        if spec.layout == "long" and spec.target_columns and "value_column" not in provider_params:
+            provider_params["value_column"] = str(spec.target_columns[0])
+        provider_config = provider_params
     return DatasetConfig(
         name=spec.name,
         description=spec.description,
-        provider=DatasetProviderConfig(
-            kind=str(spec.source),
-            config=JsonObject(provider_params),
+        provider=(
+            SyntheticDatasetProviderConfig(
+                generator=str(spec.generator),
+                params=provider_params,
+            )
+            if spec.source == "synthetic"
+            else CsvDatasetProviderConfig(
+                path=str(spec.path),
+                value_column=None if provider_params.get("value_column") is None else str(provider_params.get("value_column")),
+                sort_ascending=bool(provider_params.get("sort_ascending", True)),
+                dropna=str(provider_params.get("dropna", "any")),
+                read_kwargs=JsonObject(provider_params.get("read_kwargs")),
+                extra=JsonObject(
+                    {
+                        key: value
+                        for key, value in provider_params.items()
+                        if key not in {"path", "value_column", "sort_ascending", "dropna", "read_kwargs"}
+                    }
+                ),
+            )
+            if spec.source == "csv"
+            else ParquetDatasetProviderConfig(
+                path=str(spec.path),
+                value_column=None if provider_params.get("value_column") is None else str(provider_params.get("value_column")),
+                sort_ascending=bool(provider_params.get("sort_ascending", True)),
+                dropna=str(provider_params.get("dropna", "any")),
+                read_kwargs=JsonObject(provider_params.get("read_kwargs")),
+                extra=JsonObject(
+                    {
+                        key: value
+                        for key, value in provider_params.items()
+                        if key not in {"path", "value_column", "sort_ascending", "dropna", "read_kwargs"}
+                    }
+                ),
+            )
         ),
         layout=str(spec.layout or "wide"),
         time_column=spec.time_column,
@@ -359,13 +462,7 @@ def _coerce_pipeline_config(
 ) -> PipelineConfig:
     return PipelineConfig(
         name=str(pipeline_name or "raw"),
-        steps=[
-            PipelineStepConfig(
-                type=str(dict(step).get("type", "")),
-                params=JsonObject(dict(dict(step).get("params") or {})),
-            )
-            for step in list(pipeline_steps or [])
-        ],
+        steps=[pipeline_step_from_object(step) for step in list(pipeline_steps or [])],
     )
 
 
@@ -448,7 +545,7 @@ def _catalog_model_payload_from_spec(spec: NotebookModelSpec) -> dict[str, Any]:
             "notebook_pipeline",
             {
                 "name": str(spec.pipeline_name or "raw"),
-                "steps": [dict(step) for step in list(spec.pipeline_steps or [])],
+                "steps": [pipeline_step_payload(pipeline_step_from_object(step)) for step in list(spec.pipeline_steps or [])],
             },
         )
     execution = _coerce_execution_config(spec.execution, default_mode="inprocess")
@@ -478,7 +575,13 @@ def _catalog_model_payload_from_spec(spec: NotebookModelSpec) -> dict[str, Any]:
 
 def _saved_dataset_payload_from_spec(spec: NotebookDatasetSpec) -> dict[str, Any]:
     provider_config = dict(spec.provider_params)
-    provider_config["path"] = str(Path(spec.path).expanduser().resolve())
+    if spec.source == "synthetic":
+        provider_config = {
+            "generator": str(spec.generator),
+            "params": provider_config,
+        }
+    else:
+        provider_config["path"] = str(Path(str(spec.path)).expanduser().resolve())
     return {
         "name": "" if spec.name is None else str(spec.name),
         "description": "" if spec.description is None else str(spec.description),
@@ -678,6 +781,65 @@ def entrypoint_model(
         execution=_coerce_execution_config(execution, default_mode="inprocess"),
         description=description,
         metadata=dict(metadata or {}),
+    )
+
+
+def catalog_model(
+    name: str,
+    *,
+    params: Mapping[str, Any] | None = None,
+    pipeline: str | None = None,
+    steps: Sequence[Mapping[str, Any]] | None = None,
+    execution: ModelExecutionConfig | Mapping[str, Any] | None = None,
+    description: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    model_dir: str | Path | None = None,
+    **param_overrides: Any,
+) -> NotebookModelSpec:
+    """Load a saved or built-in catalog model into a notebook model spec.
+
+    This lets notebooks start from a cataloged model reference and then
+    override params, pipeline, or execution for a specific run.
+    """
+
+    target_dir = None if model_dir is None else Path(model_dir).expanduser().resolve()
+    payload = (
+        _load_catalog_model(str(name))
+        if target_dir is None
+        else _load_catalog_model(str(name), model_dir=target_dir)
+    )
+
+    catalog_metadata = dict(payload.get("metadata") or {})
+    stored_pipeline = catalog_metadata.pop("notebook_pipeline", None)
+    stored_execution = catalog_metadata.pop("notebook_execution", None)
+
+    if isinstance(stored_pipeline, Mapping):
+        base_pipeline_name = str(stored_pipeline.get("name", "raw") or "raw")
+        base_pipeline_steps = list(stored_pipeline.get("steps") or [])
+    else:
+        base_pipeline_name = "raw"
+        base_pipeline_steps = []
+
+    merged_params = dict(payload.get("params") or {})
+    merged_params.update(dict(params or {}))
+    merged_params.update(param_overrides)
+
+    merged_metadata = catalog_metadata
+    merged_metadata.update(dict(metadata or {}))
+
+    return NotebookModelSpec(
+        name=str(payload.get("name") or name),
+        reference_kind=str(dict(payload.get("reference") or {}).get("kind") or ""),
+        reference_value=str(dict(payload.get("reference") or {}).get("value") or ""),
+        params=merged_params,
+        pipeline_name=str(pipeline if pipeline is not None else base_pipeline_name),
+        pipeline_steps=list(steps) if steps is not None else base_pipeline_steps,
+        execution=_coerce_execution_config(
+            stored_execution if execution is None else execution,
+            default_mode="inprocess",
+        ),
+        description=description if description is not None else payload.get("description"),
+        metadata=merged_metadata,
     )
 
 
@@ -969,6 +1131,39 @@ def parquet_dataset(path: str | Path, **kwargs: Any) -> NotebookDatasetSpec:
     return tabular_dataset(path, source="parquet", **kwargs)
 
 
+def synthetic_dataset(
+    generator: str,
+    *,
+    params: Mapping[str, Any] | RegimeSwitchingFactorSVConfig | None = None,
+    n_points: int = 100,
+    name: str | None = None,
+    description: str | None = None,
+    frequency: str | None = "B",
+    semantics: Mapping[str, Any] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> NotebookDatasetSpec:
+    """Create a synthetic notebook dataset spec.
+
+    ``n_points`` is used only for notebook-side preview/loading helpers such as
+    ``dataset_frame(spec)``. When the spec is passed to ``run_benchmark`` as
+    ``with_dataset=...``, the active benchmark protocol still determines the
+    generated dataset size.
+    """
+
+    return NotebookDatasetSpec(
+        source="synthetic",
+        generator=str(generator),
+        preview_n_points=int(n_points),
+        name=name,
+        description=description,
+        layout="tensor",
+        frequency=frequency,
+        provider_params=_coerce_mapping_payload(params),
+        semantics=dict(semantics or {}),
+        metadata=dict(metadata or {}),
+    )
+
+
 def save_dataset_definition(
     dataset: NotebookDatasetSpec | Mapping[str, Any],
     *,
@@ -1028,8 +1223,51 @@ def _dataset_values_for_split(dataset: object, split: str) -> np.ndarray:
 
 
 def _source_dataset_frame_view(spec: NotebookDatasetSpec) -> BenchmarkDatasetView:
+    if spec.source == "synthetic":
+        generator_name = str(spec.generator)
+        if generator_name not in GENERATOR_REGISTRY:
+            raise KeyError(
+                f"Unknown generator '{generator_name}'. Supported: {sorted(GENERATOR_REGISTRY)}"
+            )
+        generator = GENERATOR_REGISTRY[generator_name](**dict(spec.provider_params))
+        simulation = generator.simulate(int(spec.preview_n_points))
+        frame = pd.DataFrame(simulation.returns, columns=list(simulation.asset_names))
+        info = {
+            "name": spec.name or f"synthetic::{generator_name}",
+            "source": "synthetic",
+            "description": spec.description,
+            "layout": "tensor",
+            "freq": str(spec.frequency or "B"),
+            "n_rows": int(frame.shape[0]),
+            "n_assets": int(frame.shape[1]),
+            "asset_names": list(frame.columns),
+            "provider": {
+                "kind": "synthetic",
+                "config": {
+                    "generator": generator_name,
+                    "params": to_jsonable(spec.provider_params),
+                },
+            },
+            "semantics": to_jsonable(spec.semantics),
+            "metadata": {
+                **to_jsonable(spec.metadata),
+                **to_jsonable(simulation.metadata),
+            },
+            "synthetic": {
+                "generator": generator_name,
+                "params": to_jsonable(spec.provider_params),
+                "n_points_to_generate": int(spec.preview_n_points),
+            },
+        }
+        frame.index.name = "row"
+        return BenchmarkDatasetView(frame=frame, info=info)
+
     dataset_config = _dataset_config_from_spec(spec)
-    provider_params = dataset_config.provider.config.to_builtin()
+    provider = dataset_config.provider
+    if isinstance(provider, (CsvDatasetProviderConfig, ParquetDatasetProviderConfig)):
+        provider_params = provider.config_payload()
+    else:
+        raise TypeError("dataset_frame(...) expects a tabular dataset spec for non-synthetic sources.")
     if dataset_config.layout == "wide" and dataset_config.target_columns:
         provider_params["asset_columns"] = list(dataset_config.target_columns)
     if dataset_config.time_column:
@@ -1074,6 +1312,7 @@ def _source_dataset_frame_view(spec: NotebookDatasetSpec) -> BenchmarkDatasetVie
 
 def _dataset_info_payload(config: BenchmarkConfig, dataset: object, *, split: str) -> dict[str, Any]:
     provider = config.dataset.provider
+    provider_config = provider.config_payload()
     payload = {
         "name": str(getattr(dataset, "name")),
         "source": str(getattr(dataset, "source")),
@@ -1085,14 +1324,14 @@ def _dataset_info_payload(config: BenchmarkConfig, dataset: object, *, split: st
         "protocol": protocol_config_payload(config.protocol),
         "provider": {
             "kind": str(provider.kind),
-            "config": to_jsonable(provider.config),
+            "config": provider_config,
         },
         "metadata": to_jsonable(getattr(dataset, "metadata")),
     }
-    if provider.kind == "synthetic":
+    if isinstance(provider, SyntheticDatasetProviderConfig):
         synthetic_payload = {
-            "generator": provider.config.get("generator"),
-            "params": to_jsonable(provider.config.get("params") or {}),
+            "generator": str(provider.generator),
+            "params": to_jsonable(provider.params),
         }
         if getattr(config.protocol, "kind", "") == "unconditional_path_dataset":
             synthetic_payload["n_training_paths_to_generate"] = int(config.protocol.n_train_paths)

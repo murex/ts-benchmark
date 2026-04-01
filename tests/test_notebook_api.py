@@ -12,18 +12,44 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+import ts_benchmark.notebook as notebook_module
 from ts_benchmark.notebook import (
+    BenchmarkConfig,
+    DatasetConfig,
+    DebugSmokeModelParams,
+    DiagnosticsConfig,
+    ForecastProtocol,
+    FunctionalSmokeConfig,
+    JsonObject,
+    ModelConfig,
+    ModelReferenceConfig,
+    OutputConfig,
+    PipelineConfig,
+    RegimeSwitchingFactorSVConfig,
+    RunConfig,
+    SyntheticDatasetProviderConfig,
+    catalog_model,
     csv_dataset,
     dataset_frame,
+    default_metric_configs,
     entrypoint_model,
+    list_models,
     load_run,
+    model_info,
+    model_parameter_schema,
     provision_adapter_venv,
     run_benchmark,
     save_benchmark_definition,
     save_dataset_definition,
     save_model_to_catalog,
+    synthetic_dataset,
 )
 from ts_benchmark.ui.services.runs import benchmark_results_dir_for_path, materialize_benchmark_results
+
+
+def test_notebook_facade_exposes_typed_surfaces_not_generic_fallbacks() -> None:
+    assert "DatasetProviderConfig" not in notebook_module.__all__
+    assert "PipelineStepConfig" not in notebook_module.__all__
 
 
 def _notebook_smoke_config(*, output_dir: Path) -> dict[str, object]:
@@ -201,6 +227,74 @@ def test_notebook_run_overrides_requested_artifacts(tmp_path: Path) -> None:
     assert (diagnostics_dir / "model_debug_artifacts" / "debug_model.json").exists()
 
 
+def test_notebook_run_accepts_typed_benchmark_config_from_notebook_exports(tmp_path: Path) -> None:
+    output_dir = tmp_path / "typed_notebook_run"
+    crps = next(metric for metric in default_metric_configs() if metric.name == "crps")
+
+    config = BenchmarkConfig(
+        version="1.0",
+        name="typed_notebook_smoke",
+        dataset=DatasetConfig(
+            provider=SyntheticDatasetProviderConfig(
+                generator="regime_switching_factor_sv",
+                params=RegimeSwitchingFactorSVConfig(n_assets=2, seed=19),
+            ),
+            layout="tensor",
+            frequency="B",
+        ),
+        protocol=ForecastProtocol(
+            horizon=3,
+            n_model_scenarios=8,
+            n_reference_scenarios=12,
+            context_length=8,
+            train_size=80,
+            test_size=20,
+            eval_stride=5,
+            train_stride=1,
+        ),
+        metrics=[crps],
+        models=[
+            ModelConfig(
+                name="debug_model",
+                reference=ModelReferenceConfig(
+                    kind="entrypoint",
+                    value="ts_benchmark.model.builtins.debug_smoke_model:DebugSmokeModel",
+                ),
+                params=DebugSmokeModelParams(scale=1.0),
+                pipeline=PipelineConfig(name="raw", steps=[]),
+            )
+        ],
+        run=RunConfig(
+            seed=19,
+            device="cpu",
+            scheduler="auto",
+            output=OutputConfig(
+                output_dir=str(output_dir),
+                keep_scenarios=False,
+                save_scenarios=False,
+                save_model_info=False,
+                save_summary=False,
+            ),
+        ),
+        diagnostics=DiagnosticsConfig(
+            save_model_debug_artifacts=False,
+            save_distribution_summary=False,
+            save_per_window_metrics=False,
+            functional_smoke=FunctionalSmokeConfig(enabled=False),
+        ),
+    )
+
+    run = run_benchmark(config)
+
+    metrics = run.metrics()
+
+    assert run.config()["benchmark"]["name"] == "typed_notebook_smoke"
+    assert run.config()["benchmark"]["protocol"]["kind"] == "forecast"
+    assert run.output_dir == output_dir.resolve()
+    assert "debug_model" in metrics.index
+    assert "crps" in metrics.columns
+
+
 def test_dataset_frame_exposes_synthetic_generator_metadata(tmp_path: Path) -> None:
     output_dir = tmp_path / "dataset_frame_run"
     config = _notebook_smoke_config(output_dir=output_dir)
@@ -213,6 +307,20 @@ def test_dataset_frame_exposes_synthetic_generator_metadata(tmp_path: Path) -> N
     assert view.info["synthetic"]["generator"] == "regime_switching_factor_sv"
     assert view.info["synthetic"]["params"]["n_assets"] == 2
     assert view.info["synthetic"]["n_points_to_generate"] == 100
+
+
+def test_notebook_can_list_models_and_parameter_schemas() -> None:
+    models = list_models()
+    info = model_info("historical_bootstrap")
+    schema = model_parameter_schema("historical_bootstrap")
+
+    assert "historical_bootstrap" in models
+    assert info["name"] == "historical_bootstrap"
+    assert info["source"] == "builtin"
+    assert info["manifest"]["name"] == "historical_bootstrap"
+    assert schema is not None
+    field_names = [field["name"] for field in schema["fields"]]
+    assert "block_size" in field_names
 
 
 def test_dataset_frame_accepts_tabular_notebook_dataset_spec(tmp_path: Path) -> None:
@@ -239,6 +347,39 @@ def test_dataset_frame_accepts_tabular_notebook_dataset_spec(tmp_path: Path) -> 
     assert view.info["source"] == "csv"
     assert view.info["n_assets"] == 2
     assert view.info["provider"]["config"]["date_column"] == "date"
+
+
+def test_dataset_frame_accepts_synthetic_notebook_dataset_spec() -> None:
+    spec = synthetic_dataset(
+        "regime_switching_factor_sv",
+        params={"n_assets": 3, "seed": 23},
+        n_points=50,
+        name="synthetic_preview",
+    )
+
+    view = dataset_frame(spec)
+
+    assert view.frame.shape == (50, 3)
+    assert view.info["source"] == "synthetic"
+    assert view.info["synthetic"]["generator"] == "regime_switching_factor_sv"
+    assert view.info["synthetic"]["params"]["n_assets"] == 3
+    assert view.info["synthetic"]["n_points_to_generate"] == 50
+
+
+def test_dataset_frame_accepts_typed_synthetic_notebook_dataset_spec() -> None:
+    spec = synthetic_dataset(
+        "regime_switching_factor_sv",
+        params=RegimeSwitchingFactorSVConfig(n_assets=4, seed=29),
+        n_points=40,
+        name="typed_synthetic_preview",
+    )
+
+    view = dataset_frame(spec)
+
+    assert view.frame.shape == (40, 4)
+    assert view.info["source"] == "synthetic"
+    assert view.info["synthetic"]["params"]["n_assets"] == 4
+    assert view.info["synthetic"]["params"]["seed"] == 29
 
 
 def test_provision_adapter_venv_returns_subprocess_execution_config(
@@ -561,6 +702,31 @@ def test_run_benchmark_can_override_dataset_with_notebook_dataset_spec(tmp_path:
     assert dataset_view.frame.shape == (100, 2)
 
 
+def test_run_benchmark_can_override_dataset_with_synthetic_notebook_dataset_spec(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "notebook_synthetic_run"
+    spec = synthetic_dataset(
+        "regime_switching_factor_sv",
+        params={"n_assets": 3, "seed": 23},
+        n_points=40,
+        name="synthetic_override",
+    )
+
+    run = run_benchmark(
+        _notebook_smoke_config(output_dir=output_dir),
+        with_dataset=spec,
+    )
+
+    assert run.config()["benchmark"]["dataset"]["provider"]["kind"] == "synthetic"
+    assert run.config()["benchmark"]["dataset"]["provider"]["config"]["generator"] == "regime_switching_factor_sv"
+    assert run.config()["benchmark"]["dataset"]["provider"]["config"]["params"]["n_assets"] == 3
+    assert run.summary()["dataset"]["resolved_source"] == "synthetic"
+    dataset_view = run.dataset_frame()
+    assert dataset_view.info["source"] == "synthetic"
+    assert dataset_view.frame.shape == (100, 3)
+
+
 def test_save_model_to_catalog_persists_notebook_model(tmp_path: Path) -> None:
     external_model_path = tmp_path / "tiny_external_model.py"
     _write_external_entrypoint_model(external_model_path)
@@ -607,6 +773,49 @@ def test_save_model_to_catalog_reuses_existing_reference(tmp_path: Path) -> None
     assert payload["name"] == "first_name"
 
 
+def test_catalog_model_loads_reference_and_allows_pipeline_override(tmp_path: Path) -> None:
+    external_model_path = tmp_path / "tiny_external_model.py"
+    _write_external_entrypoint_model(external_model_path)
+    model_dir = tmp_path / "model_catalog"
+
+    save_model_to_catalog(
+        entrypoint_model(
+            "cataloged_model",
+            f"{external_model_path}:build_estimator",
+            shift=0.5,
+            pipeline="minmax",
+            steps=[
+                {
+                    "type": "min_max_scale",
+                    "params": {"feature_min": 0.0, "feature_max": 1.0, "clip": False},
+                }
+            ],
+            execution={"mode": "subprocess", "python": sys.executable},
+        ),
+        model_dir=model_dir,
+    )
+
+    loaded = catalog_model("cataloged_model", model_dir=model_dir)
+    overridden = catalog_model(
+        "cataloged_model",
+        model_dir=model_dir,
+        pipeline="raw",
+        steps=[],
+    )
+
+    assert loaded.reference_kind == "entrypoint"
+    assert loaded.reference_value == f"{external_model_path}:build_estimator"
+    assert loaded.pipeline_name == "minmax"
+    assert loaded.pipeline_steps[0]["type"] == "min_max_scale"
+    assert loaded.execution.mode == "subprocess"
+    assert loaded.execution.python == sys.executable
+    assert loaded.params["shift"] == 0.5
+
+    assert overridden.reference_value == f"{external_model_path}:build_estimator"
+    assert overridden.pipeline_name == "raw"
+    assert overridden.pipeline_steps == []
+
+
 def test_save_dataset_definition_persists_notebook_dataset_spec(tmp_path: Path) -> None:
     csv_path = tmp_path / "returns.csv"
     _write_returns_csv(csv_path)
@@ -628,6 +837,25 @@ def test_save_dataset_definition_persists_notebook_dataset_spec(tmp_path: Path) 
     assert payload["provider"]["kind"] == "csv"
     assert payload["provider"]["config"]["path"] == str(csv_path.resolve())
     assert payload["schema"]["target_columns"] == ["asset_a", "asset_b"]
+
+
+def test_save_dataset_definition_persists_synthetic_notebook_dataset_spec(tmp_path: Path) -> None:
+    dataset_spec = synthetic_dataset(
+        "regime_switching_factor_sv",
+        params={"n_assets": 4, "seed": 31},
+        n_points=60,
+        name="Synthetic Story Dataset",
+        description="Notebook-saved synthetic dataset",
+    )
+
+    saved_path = save_dataset_definition(dataset_spec, dataset_dir=tmp_path / "datasets")
+    payload = json.loads(saved_path.read_text(encoding="utf-8"))
+
+    assert saved_path.exists()
+    assert payload["name"] == "Synthetic Story Dataset"
+    assert payload["provider"]["kind"] == "synthetic"
+    assert payload["provider"]["config"]["generator"] == "regime_switching_factor_sv"
+    assert payload["provider"]["config"]["params"]["n_assets"] == 4
 
 
 def test_save_benchmark_definition_persists_notebook_run_config(tmp_path: Path) -> None:

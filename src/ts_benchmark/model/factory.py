@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..preprocessing import PreprocessingPipeline, build_pipeline_from_config
-from .definition import ModelConfig, PipelineConfig
+from .definition import ModelConfig, PipelineConfig, model_params_to_builtin
 from .resolution import instantiate_model_target
 from .wrappers.duck_typed import coerce_model_target
 from .wrappers.external_process import ExternalProcessScenarioModel
@@ -27,13 +27,13 @@ def build_model(
         return ExternalProcessScenarioModel(
             name=model_config.name,
             reference=model_config.reference,
-            params=model_config.params.to_builtin(),
+            params=model_params_to_builtin(model_config.params),
             execution=execution,
             source_path=source_path,
         )
 
     target = instantiate_model_target(
         reference=model_config.reference,
-        params=model_config.params.to_builtin(),
+        params=model_params_to_builtin(model_config.params),
     )
     return coerce_model_target(target, name=model_config.name)

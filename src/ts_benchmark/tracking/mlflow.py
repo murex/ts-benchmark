@@ -77,16 +77,16 @@ def _dataset_summary_payload(
 
 
 def _flatten_mapping(prefix: str, value: Any) -> dict[str, str]:
+    jsonable = to_jsonable(value)
     flat: dict[str, str] = {}
-    if isinstance(value, dict):
-        for key, item in value.items():
+    if isinstance(jsonable, dict):
+        for key, item in jsonable.items():
             next_prefix = f"{prefix}.{key}" if prefix else str(key)
             flat.update(_flatten_mapping(next_prefix, item))
         return flat
-    if isinstance(value, (list, tuple)):
-            flat[prefix] = json.dumps(to_jsonable(value), sort_keys=True)
-            return flat
-    jsonable = to_jsonable(value)
+    if isinstance(jsonable, list):
+        flat[prefix] = json.dumps(jsonable, sort_keys=True)
+        return flat
     flat[prefix] = json.dumps(jsonable) if isinstance(jsonable, (bool, type(None), dict, list)) else str(jsonable)
     return flat
 

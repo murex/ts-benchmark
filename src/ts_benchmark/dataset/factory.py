@@ -5,11 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..benchmark.protocol import Protocol
-from .definition import DatasetConfig
+from ..serialization import to_jsonable
+from ..utils import JsonObject
+from .definition import (
+    CsvDatasetProviderConfig,
+    DatasetConfig,
+    ParquetDatasetProviderConfig,
+    SyntheticDatasetProviderConfig,
+)
 from .providers.synthetic import RegimeSwitchingFactorSVGenerator
 from .providers.tabular import make_tabular_benchmark_dataset
 from .runtime import DatasetInstance
-from ..utils import JsonObject
 
 
 GENERATOR_REGISTRY = {
@@ -33,11 +39,11 @@ def _resolve_data_path(source_path: Path | None, path: str | None) -> str | None
 def _resolved_dataset_name(dataset_config: DatasetConfig) -> str:
     if dataset_config.name:
         return str(dataset_config.name)
-    if dataset_config.provider.kind == "synthetic":
-        return f"synthetic::{dataset_config.provider.config.get('generator')}"
-    path = dataset_config.provider.config.get("path")
-    if path:
-        return Path(str(path)).stem
+    provider = dataset_config.provider
+    if isinstance(provider, SyntheticDatasetProviderConfig):
+        return f"synthetic::{provider.generator}"
+    if isinstance(provider, (CsvDatasetProviderConfig, ParquetDatasetProviderConfig)) and provider.path:
+        return Path(str(provider.path)).stem
     return f"{dataset_config.provider.kind}::dataset"
 
 
@@ -49,19 +55,14 @@ def build_dataset(
     source_path: Path | None = None,
 ) -> DatasetInstance:
     provider = dataset_config.provider
-    provider_config = provider.config
 
-    if provider.kind == "synthetic":
-        generator_name = provider_config.get("generator")
+    if isinstance(provider, SyntheticDatasetProviderConfig):
+        generator_name = str(provider.generator)
         if generator_name not in GENERATOR_REGISTRY:
             raise KeyError(
                 f"Unknown generator '{generator_name}'. Supported: {sorted(GENERATOR_REGISTRY)}"
             )
-        generator_params = provider_config.get("params")
-        if isinstance(generator_params, JsonObject):
-            generator_kwargs = generator_params.to_builtin()
-        else:
-            generator_kwargs = dict(generator_params or {})
+        generator_kwargs = dict(to_jsonable(provider.params))
         generator = GENERATOR_REGISTRY[str(generator_name)](**generator_kwargs)
         dataset = generator.make_benchmark_dataset(
             protocol=protocol,
@@ -79,9 +80,9 @@ def build_dataset(
         )
         return dataset
 
-    if provider.kind in {"csv", "parquet"}:
-        loader_params = provider_config.to_builtin()
-        resolved_path = _resolve_data_path(source_path, provider_config.get("path"))
+    if isinstance(provider, (CsvDatasetProviderConfig, ParquetDatasetProviderConfig)):
+        loader_params = provider.config_payload()
+        resolved_path = _resolve_data_path(source_path, provider.path)
         loader_params["path"] = resolved_path
         loader_params["layout"] = dataset_config.layout
         if dataset_config.time_column:
