@@ -22,6 +22,7 @@ from ts_benchmark.model import (
     ScenarioRequest,
     ScenarioSamples,
     StochasticVolatilityBootstrapModel,
+    StudentTCovarianceModel,
     TrainingData,
     UnconditionalPathDatasetProtocol,
     UnconditionalWindowedProtocol,
@@ -211,6 +212,41 @@ def test_ewma_gaussian_smoke() -> None:
     assert "ewma_gaussian" in metrics.index
     assert np.isfinite(metrics.loc["ewma_gaussian", "crps"])
     assert np.isfinite(metrics.loc["ewma_gaussian", "energy_score"])
+
+
+def test_student_t_covariance_smoke() -> None:
+    generator = RegimeSwitchingFactorSVGenerator(n_assets=3, seed=19)
+    protocol = ForecastProtocol(
+        train_size=160,
+        test_size=40,
+        context_length=12,
+        horizon=4,
+        eval_stride=10,
+        train_stride=2,
+        n_model_scenarios=16,
+        n_reference_scenarios=24,
+    )
+    dataset = generator.make_benchmark_dataset(
+        protocol=protocol,
+        seed=19,
+    )
+
+    benchmark = ScenarioBenchmark(
+        models={"student_t_covariance": StudentTCovarianceModel()},
+        protocol=protocol,
+        metric_configs=select_metric_configs_for_run(
+            [{"name": "crps"}, {"name": "energy_score"}, {"name": "mean_error"}],
+            has_reference_scenarios=True,
+            n_assets=3,
+            dataset_source="synthetic",
+        ),
+        runtime=RuntimeContext(seed=19),
+    )
+    results = benchmark.run(dataset)
+    metrics = results.metrics_frame()
+    assert "student_t_covariance" in metrics.index
+    assert np.isfinite(metrics.loc["student_t_covariance", "crps"])
+    assert np.isfinite(metrics.loc["student_t_covariance", "energy_score"])
 
 
 def test_unconditional_generation_mode_smoke() -> None:

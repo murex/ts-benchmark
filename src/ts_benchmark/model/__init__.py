@@ -23,6 +23,7 @@ _EXPORT_TO_MODULE = {
     "ScenarioRequest": ".contracts",
     "ScenarioSamples": ".contracts",
     "StochasticVolatilityBootstrapModel": ".builtins",
+    "StudentTCovarianceModel": ".builtins",
     "TrainPathCollection": ".contracts",
     "TrainingData": ".contracts",
     "UnconditionalPathDatasetProtocol": "..benchmark",

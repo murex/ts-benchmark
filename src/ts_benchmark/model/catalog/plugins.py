@@ -20,6 +20,7 @@ from ..builtins.ewma_gaussian import EWMAGaussianModel
 from ..builtins.gaussian_covariance import GaussianCovarianceModel
 from ..builtins.historical_bootstrap import HistoricalBootstrapModel
 from ..builtins.stochastic_vol_bootstrap import StochasticVolatilityBootstrapModel
+from ..builtins.student_t_covariance import StudentTCovarianceModel
 from ...serialization import to_jsonable
 from .plugin_metadata import PluginResourceMetadata, load_plugin_resource_metadata
 
@@ -104,6 +105,7 @@ BUILTIN_MODEL_FACTORIES: dict[str, Callable[..., Any]] = {
     "gaussian_covariance": GaussianCovarianceModel,
     "historical_bootstrap": HistoricalBootstrapModel,
     "stochastic_volatility_bootstrap": StochasticVolatilityBootstrapModel,
+    "student_t_covariance": StudentTCovarianceModel,
 }
 
 
@@ -150,6 +152,27 @@ BUILTIN_MODEL_MANIFESTS: dict[str, ModelPluginManifest] = {
         default_pipeline="raw",
         tags=("baseline", "gaussian", "covariance", "monte-carlo"),
         notes="Fits a single multivariate Gaussian distribution to benchmark-owned training returns.",
+        capabilities=PluginCapabilities(
+            multivariate=True,
+            probabilistic_sampling=True,
+            benchmark_protocol_contract=True,
+            explicit_preprocessing=True,
+            uses_benchmark_device=False,
+        ),
+        manifest_source="builtin",
+    ),
+    "student_t_covariance": ModelPluginManifest(
+        name="student_t_covariance",
+        display_name="Student-t covariance",
+        version=_BUILTIN_PACKAGE_VERSION,
+        family="parametric",
+        description="Static multivariate Student-t baseline fit from historical mean and covariance.",
+        runtime_device_hints=("cpu",),
+        supported_dataset_sources=("synthetic", "csv", "parquet"),
+        required_input="returns",
+        default_pipeline="raw",
+        tags=("baseline", "student-t", "covariance", "monte-carlo", "heavy-tails"),
+        notes="Fits a single elliptical Student-t distribution and rescales the empirical covariance to the implied scale matrix.",
         capabilities=PluginCapabilities(
             multivariate=True,
             probabilistic_sampling=True,

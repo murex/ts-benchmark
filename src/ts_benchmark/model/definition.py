@@ -212,6 +212,13 @@ class EWMAGaussianParams(_TypedConfigPayload):
 
 
 @dataclass(frozen=True)
+class StudentTCovarianceParams(_TypedConfigPayload):
+    degrees_of_freedom: float = 8.0
+    covariance_jitter: float = 1e-6
+    use_empirical_mean: bool = True
+
+
+@dataclass(frozen=True)
 class StochasticVolatilityBootstrapParams(_TypedConfigPayload):
     ewma_lambda: float = 0.97
     block_size: int = 5
@@ -230,10 +237,12 @@ BUILTIN_MODEL_PARAM_TYPES: dict[tuple[str, str], type[_TypedConfigPayload]] = {
     ("builtin", "gaussian_covariance"): GaussianCovarianceParams,
     ("builtin", "historical_bootstrap"): HistoricalBootstrapParams,
     ("builtin", "stochastic_volatility_bootstrap"): StochasticVolatilityBootstrapParams,
+    ("builtin", "student_t_covariance"): StudentTCovarianceParams,
     ("entrypoint", "ts_benchmark.model.builtins.ewma_gaussian:EWMAGaussianModel"): EWMAGaussianParams,
     ("entrypoint", "ts_benchmark.model.builtins.gaussian_covariance:GaussianCovarianceModel"): GaussianCovarianceParams,
     ("entrypoint", "ts_benchmark.model.builtins.historical_bootstrap:HistoricalBootstrapModel"): HistoricalBootstrapParams,
     ("entrypoint", "ts_benchmark.model.builtins.stochastic_vol_bootstrap:StochasticVolatilityBootstrapModel"): StochasticVolatilityBootstrapParams,
+    ("entrypoint", "ts_benchmark.model.builtins.student_t_covariance:StudentTCovarianceModel"): StudentTCovarianceParams,
     ("entrypoint", "ts_benchmark.model.builtins.debug_smoke_model:DebugSmokeModel"): DebugSmokeModelParams,
 }
 
@@ -243,6 +252,7 @@ ModelParamValue = (
     | GaussianCovarianceParams
     | HistoricalBootstrapParams
     | StochasticVolatilityBootstrapParams
+    | StudentTCovarianceParams
     | DebugSmokeModelParams
     | JsonObject
 )
