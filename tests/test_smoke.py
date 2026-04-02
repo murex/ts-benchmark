@@ -13,6 +13,7 @@ from ts_benchmark.dataset.providers.synthetic import RegimeSwitchingFactorSVGene
 from ts_benchmark.metrics import MetricConfig, rank_metrics_table, select_metric_configs_for_run
 from ts_benchmark.model import (
     EWMAGaussianModel,
+    FilteredHistoricalSimulationModel,
     ForecastWindowCollection,
     ForecastProtocol,
     GaussianCovarianceModel,
@@ -247,6 +248,41 @@ def test_student_t_covariance_smoke() -> None:
     assert "student_t_covariance" in metrics.index
     assert np.isfinite(metrics.loc["student_t_covariance", "crps"])
     assert np.isfinite(metrics.loc["student_t_covariance", "energy_score"])
+
+
+def test_filtered_historical_simulation_smoke() -> None:
+    generator = RegimeSwitchingFactorSVGenerator(n_assets=3, seed=23)
+    protocol = ForecastProtocol(
+        train_size=160,
+        test_size=40,
+        context_length=12,
+        horizon=4,
+        eval_stride=10,
+        train_stride=2,
+        n_model_scenarios=16,
+        n_reference_scenarios=24,
+    )
+    dataset = generator.make_benchmark_dataset(
+        protocol=protocol,
+        seed=23,
+    )
+
+    benchmark = ScenarioBenchmark(
+        models={"filtered_historical_simulation": FilteredHistoricalSimulationModel()},
+        protocol=protocol,
+        metric_configs=select_metric_configs_for_run(
+            [{"name": "crps"}, {"name": "energy_score"}, {"name": "mean_error"}],
+            has_reference_scenarios=True,
+            n_assets=3,
+            dataset_source="synthetic",
+        ),
+        runtime=RuntimeContext(seed=23),
+    )
+    results = benchmark.run(dataset)
+    metrics = results.metrics_frame()
+    assert "filtered_historical_simulation" in metrics.index
+    assert np.isfinite(metrics.loc["filtered_historical_simulation", "crps"])
+    assert np.isfinite(metrics.loc["filtered_historical_simulation", "energy_score"])
 
 
 def test_unconditional_generation_mode_smoke() -> None:

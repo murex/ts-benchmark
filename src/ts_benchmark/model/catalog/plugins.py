@@ -17,6 +17,7 @@ from importlib import metadata
 from typing import Any, Callable, Iterable, Mapping, get_args, get_origin
 
 from ..builtins.ewma_gaussian import EWMAGaussianModel
+from ..builtins.filtered_historical_simulation import FilteredHistoricalSimulationModel
 from ..builtins.gaussian_covariance import GaussianCovarianceModel
 from ..builtins.historical_bootstrap import HistoricalBootstrapModel
 from ..builtins.stochastic_vol_bootstrap import StochasticVolatilityBootstrapModel
@@ -102,6 +103,7 @@ class PluginInfo:
 
 BUILTIN_MODEL_FACTORIES: dict[str, Callable[..., Any]] = {
     "ewma_gaussian": EWMAGaussianModel,
+    "filtered_historical_simulation": FilteredHistoricalSimulationModel,
     "gaussian_covariance": GaussianCovarianceModel,
     "historical_bootstrap": HistoricalBootstrapModel,
     "stochastic_volatility_bootstrap": StochasticVolatilityBootstrapModel,
@@ -131,6 +133,27 @@ BUILTIN_MODEL_MANIFESTS: dict[str, ModelPluginManifest] = {
         default_pipeline="raw",
         tags=("baseline", "ewma", "gaussian", "covariance", "monte-carlo"),
         notes="Uses forecast context or recent training state to initialize an EWMA covariance recursion before Gaussian sampling.",
+        capabilities=PluginCapabilities(
+            multivariate=True,
+            probabilistic_sampling=True,
+            benchmark_protocol_contract=True,
+            explicit_preprocessing=True,
+            uses_benchmark_device=False,
+        ),
+        manifest_source="builtin",
+    ),
+    "filtered_historical_simulation": ModelPluginManifest(
+        name="filtered_historical_simulation",
+        display_name="Filtered historical simulation",
+        version=_BUILTIN_PACKAGE_VERSION,
+        family="bootstrap",
+        description="EWMA-filtered historical simulation with deterministic volatility reinflation.",
+        runtime_device_hints=("cpu",),
+        supported_dataset_sources=("synthetic", "csv", "parquet"),
+        required_input="returns",
+        default_pipeline="raw",
+        tags=("baseline", "historical", "filtered-historical-simulation", "ewma", "volatility"),
+        notes="Standardizes returns by EWMA volatility, block-resamples residual vectors, then re-inflates with a deterministic EWMA volatility recursion.",
         capabilities=PluginCapabilities(
             multivariate=True,
             probabilistic_sampling=True,

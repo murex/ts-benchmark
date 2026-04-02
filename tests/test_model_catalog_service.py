@@ -15,12 +15,16 @@ def test_list_model_catalog_includes_builtins(tmp_path: Path) -> None:
     rows = model_catalog.list_model_catalog(model_dir=tmp_path)
 
     ewma = next(row for row in rows if row["name"] == "ewma_gaussian")
+    fhs = next(row for row in rows if row["name"] == "filtered_historical_simulation")
     historical = next(row for row in rows if row["name"] == "historical_bootstrap")
     student_t = next(row for row in rows if row["name"] == "student_t_covariance")
 
     assert ewma["origin"] == "Built-in"
     assert ewma["reference_kind"] == "builtin"
     assert ewma["removable"] is False
+    assert fhs["origin"] == "Built-in"
+    assert fhs["reference_kind"] == "builtin"
+    assert fhs["removable"] is False
     assert student_t["origin"] == "Built-in"
     assert student_t["reference_kind"] == "builtin"
     assert student_t["removable"] is False

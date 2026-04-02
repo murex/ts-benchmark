@@ -8,6 +8,7 @@ _EXPORT_TO_MODULE = {
     "DebugSmokeModel": ".builtins",
     "EWMAGaussianModel": ".builtins",
     "ExternalProcessScenarioModel": ".wrappers",
+    "FilteredHistoricalSimulationModel": ".builtins",
     "ForecastWindowCollection": ".contracts",
     "ForecastProtocol": "..benchmark",
     "GaussianCovarianceModel": ".builtins",
