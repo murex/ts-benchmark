@@ -6,6 +6,7 @@ from importlib import import_module
 
 _EXPORT_TO_MODULE = {
     "DebugSmokeModel": ".builtins",
+    "EWMAGaussianModel": ".builtins",
     "ExternalProcessScenarioModel": ".wrappers",
     "ForecastWindowCollection": ".contracts",
     "ForecastProtocol": "..benchmark",

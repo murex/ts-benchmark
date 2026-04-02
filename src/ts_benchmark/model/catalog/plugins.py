@@ -16,6 +16,7 @@ from functools import lru_cache
 from importlib import metadata
 from typing import Any, Callable, Iterable, Mapping, get_args, get_origin
 
+from ..builtins.ewma_gaussian import EWMAGaussianModel
 from ..builtins.gaussian_covariance import GaussianCovarianceModel
 from ..builtins.historical_bootstrap import HistoricalBootstrapModel
 from ..builtins.stochastic_vol_bootstrap import StochasticVolatilityBootstrapModel
@@ -99,6 +100,7 @@ class PluginInfo:
 
 
 BUILTIN_MODEL_FACTORIES: dict[str, Callable[..., Any]] = {
+    "ewma_gaussian": EWMAGaussianModel,
     "gaussian_covariance": GaussianCovarianceModel,
     "historical_bootstrap": HistoricalBootstrapModel,
     "stochastic_volatility_bootstrap": StochasticVolatilityBootstrapModel,
@@ -115,6 +117,27 @@ def _package_version(package_name: str) -> str | None:
 _BUILTIN_PACKAGE_VERSION = _package_version("ts-benchmark") or "local"
 
 BUILTIN_MODEL_MANIFESTS: dict[str, ModelPluginManifest] = {
+    "ewma_gaussian": ModelPluginManifest(
+        name="ewma_gaussian",
+        display_name="EWMA Gaussian",
+        version=_BUILTIN_PACKAGE_VERSION,
+        family="parametric",
+        description="RiskMetrics-style multivariate Gaussian baseline with recursively updated EWMA covariance.",
+        runtime_device_hints=("cpu",),
+        supported_dataset_sources=("synthetic", "csv", "parquet"),
+        required_input="returns",
+        default_pipeline="raw",
+        tags=("baseline", "ewma", "gaussian", "covariance", "monte-carlo"),
+        notes="Uses forecast context or recent training state to initialize an EWMA covariance recursion before Gaussian sampling.",
+        capabilities=PluginCapabilities(
+            multivariate=True,
+            probabilistic_sampling=True,
+            benchmark_protocol_contract=True,
+            explicit_preprocessing=True,
+            uses_benchmark_device=False,
+        ),
+        manifest_source="builtin",
+    ),
     "gaussian_covariance": ModelPluginManifest(
         name="gaussian_covariance",
         display_name="Gaussian covariance",
