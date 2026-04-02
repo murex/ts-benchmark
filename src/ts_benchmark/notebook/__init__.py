@@ -16,7 +16,7 @@ from ..dataset.definition import (
     ParquetDatasetProviderConfig,
     SyntheticDatasetProviderConfig,
 )
-from ..dataset.providers.synthetic import RegimeSwitchingFactorSVConfig
+from ..dataset.providers.synthetic_config import RegimeSwitchingFactorSVConfig
 from ..metrics import MetricConfig, MetricRequirements, available_metric_names, default_metric_configs
 from ..model.definition import (
     ClipPipelineStepConfig,
@@ -54,6 +54,7 @@ from .api import (
     csv_dataset,
     dataset_frame,
     entrypoint_model,
+    get_model_config,
     load_run,
     list_models,
     model_info,
@@ -100,6 +101,7 @@ __all__ = [
     "NotebookRun",
     "dataset_frame",
     "entrypoint_model",
+    "get_model_config",
     "available_metric_names",
     "load_run",
     "list_models",

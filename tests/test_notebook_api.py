@@ -33,6 +33,7 @@ from ts_benchmark.notebook import (
     dataset_frame,
     default_metric_configs,
     entrypoint_model,
+    get_model_config,
     list_models,
     load_run,
     model_info,
@@ -44,6 +45,7 @@ from ts_benchmark.notebook import (
     save_model_to_catalog,
     synthetic_dataset,
 )
+from ts_benchmark.model.catalog.plugins import ModelParameterSchema, ModelParameterSpec, ModelPluginManifest, PluginCapabilities, PluginInfo
 from ts_benchmark.ui.services.runs import benchmark_results_dir_for_path, materialize_benchmark_results
 
 
@@ -321,6 +323,67 @@ def test_notebook_can_list_models_and_parameter_schemas() -> None:
     assert schema is not None
     field_names = [field["name"] for field in schema["fields"]]
     assert "block_size" in field_names
+
+
+def test_get_model_config_returns_typed_builtin_default() -> None:
+    config = get_model_config("historical_bootstrap")
+
+    assert isinstance(config, ModelConfig)
+    assert config.name == "historical_bootstrap"
+    assert config.reference.kind == "builtin"
+    assert config.reference.value == "historical_bootstrap"
+    assert config.pipeline.name == "raw"
+    assert config.params.block_size == 5
+
+
+def test_get_model_config_materializes_plugin_defaults(monkeypatch) -> None:
+    def fake_info(name: str) -> PluginInfo:
+        assert name == "sbts"
+        return PluginInfo(
+            name="sbts",
+            source="entry_point",
+            target="sbts_plugin.contract:build_estimator",
+            package="sbts-plugin",
+            package_version="0.1.0",
+            manifest=ModelPluginManifest(
+                name="sbts",
+                default_pipeline="minmax",
+                description="SBTS plugin",
+                capabilities=PluginCapabilities(),
+            ),
+        )
+
+    def fake_schema(name: str) -> ModelParameterSchema:
+        assert name == "sbts"
+        return ModelParameterSchema(
+            name="sbts",
+            fields=(
+                ModelParameterSpec(name="h", value_type="float", required=False, default=0.2),
+                ModelParameterSpec(name="random_seed", value_type="int", required=False, default=None),
+            ),
+            schema_source="resource_file",
+        )
+
+    monkeypatch.setattr("ts_benchmark.notebook.api.get_model_plugin_info", fake_info)
+    monkeypatch.setattr("ts_benchmark.notebook.api.resolve_model_plugin_parameter_schema", fake_schema)
+
+    config = get_model_config("sbts")
+
+    assert isinstance(config, ModelConfig)
+    assert config.reference.kind == "plugin"
+    assert config.reference.value == "sbts"
+    assert config.description == "SBTS plugin"
+    assert config.pipeline.name == "minmax"
+    assert len(config.pipeline.steps) == 1
+    assert config.pipeline.steps[0].type == "min_max_scale"
+    assert config.params.h == 0.2
+    assert config.params["h"] == 0.2
+    assert "random_seed" in config.params
+
+    config.params.h = 0.05
+
+    assert config.params.h == 0.05
+    assert config.params["h"] == 0.05
 
 
 def test_dataset_frame_accepts_tabular_notebook_dataset_spec(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from ..serialization import to_jsonable
 from ..utils import JsonObject
-from .providers.synthetic import RegimeSwitchingFactorSVConfig
+from .providers.synthetic_config import RegimeSwitchingFactorSVConfig
 
 
 def _json_object(value: Mapping[str, Any] | JsonObject | None) -> JsonObject:

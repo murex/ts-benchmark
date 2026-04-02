@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
+import copy
 from dataclasses import fields, is_dataclass
 from typing import Any
 
@@ -63,14 +64,19 @@ def _to_builtin_json(value: Any) -> Any:
     return value
 
 
-class JsonObject(Mapping[str, Any]):
-    """Immutable mapping wrapper used for dynamic JSON-like payloads."""
+class JsonObject(MutableMapping[str, Any]):
+    """Mutable mapping wrapper used for dynamic JSON-like payloads.
+
+    JsonObject supports both mapping access and attribute-style access for
+    key names that are valid Python identifiers and do not collide with
+    wrapper methods.
+    """
 
     __slots__ = ("_data",)
 
     def __init__(self, value: Mapping[str, Any] | None = None):
         source = _mapping_source(value)
-        self._data = {str(key): _normalize_json_value(item) for key, item in source.items()}
+        object.__setattr__(self, "_data", {str(key): _normalize_json_value(item) for key, item in source.items()})
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._data)
@@ -80,6 +86,48 @@ class JsonObject(Mapping[str, Any]):
 
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self._data[str(key)] = _normalize_json_value(value)
+
+    def __delitem__(self, key: str) -> None:
+        del self._data[key]
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            data = object.__getattribute__(self, "_data")
+        except AttributeError as exc:
+            raise AttributeError(name) from exc
+        try:
+            return data[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_data":
+            object.__setattr__(self, name, value)
+            return
+        if hasattr(type(self), name):
+            raise AttributeError(
+                f"{name!r} is reserved on {type(self).__name__}; use item access instead."
+            )
+        self._data[name] = _normalize_json_value(value)
+
+    def __delattr__(self, name: str) -> None:
+        if name == "_data" or hasattr(type(self), name):
+            raise AttributeError(
+                f"{name!r} is reserved on {type(self).__name__}; use item access instead."
+            )
+        try:
+            del self._data[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "JsonObject":
+        copied = type(self)()
+        memo[id(self)] = copied
+        object.__setattr__(copied, "_data", copy.deepcopy(self._data, memo))
+        return copied
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self._data!r})"

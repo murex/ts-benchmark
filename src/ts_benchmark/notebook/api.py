@@ -33,7 +33,7 @@ from ..dataset.definition import (
     SyntheticDatasetProviderConfig,
 )
 from ..dataset.factory import GENERATOR_REGISTRY, build_dataset
-from ..dataset.providers.synthetic import RegimeSwitchingFactorSVConfig
+from ..dataset.providers.synthetic_config import RegimeSwitchingFactorSVConfig
 from ..dataset.providers.tabular import load_returns_frame
 from ..model.definition import (
     ModelConfig,
@@ -261,6 +261,38 @@ def model_parameter_schema(name: str) -> dict[str, Any] | None:
 
     schema = resolve_model_plugin_parameter_schema(str(name))
     return None if schema is None else to_jsonable(schema)
+
+
+def _default_param_payload_for_model(name: str) -> dict[str, Any]:
+    schema = resolve_model_plugin_parameter_schema(str(name))
+    if schema is None:
+        return {}
+    params: dict[str, Any] = {}
+    for field_spec in schema.fields:
+        if str(field_spec.parameter_type) != "explicit":
+            continue
+        if not bool(field_spec.editable):
+            continue
+        params[str(field_spec.name)] = to_jsonable(field_spec.default)
+    return params
+
+
+def get_model_config(name: str) -> ModelConfig:
+    """Return a typed default ModelConfig for a supported built-in or plugin model."""
+
+    resolved_name = str(name)
+    plugin_info = get_model_plugin_info(resolved_name)
+    reference_kind = "builtin" if str(plugin_info.source) == "builtin" else "plugin"
+    reference = ModelReferenceConfig(kind=reference_kind, value=resolved_name)
+    pipeline = resolve_default_pipeline_config(reference, default_name=resolved_name)
+    description = None if plugin_info.manifest is None else plugin_info.manifest.description
+    return ModelConfig(
+        name=resolved_name,
+        description=description,
+        reference=reference,
+        params=_default_param_payload_for_model(resolved_name),
+        pipeline=pipeline,
+    )
 
 
 def _optional_dependencies_from_pyproject(root: str | Path, extra_name: str) -> list[str]:
