@@ -14,6 +14,7 @@ from ts_benchmark.metrics import MetricConfig, rank_metrics_table, select_metric
 from ts_benchmark.model import (
     ForecastWindowCollection,
     ForecastProtocol,
+    GaussianCovarianceModel,
     HistoricalBootstrapModel,
     RuntimeContext,
     ScenarioModel,
@@ -139,6 +140,41 @@ def test_contract_model_smoke() -> None:
     assert "gaussian_contract_smoke" in metrics.index
     assert np.isfinite(metrics.values).all()
     assert results.metadata["train_stride"] == protocol.train_stride
+
+
+def test_gaussian_covariance_smoke() -> None:
+    generator = RegimeSwitchingFactorSVGenerator(n_assets=3, seed=11)
+    protocol = ForecastProtocol(
+        train_size=160,
+        test_size=40,
+        context_length=12,
+        horizon=4,
+        eval_stride=10,
+        train_stride=2,
+        n_model_scenarios=16,
+        n_reference_scenarios=24,
+    )
+    dataset = generator.make_benchmark_dataset(
+        protocol=protocol,
+        seed=11,
+    )
+
+    benchmark = ScenarioBenchmark(
+        models={"gaussian_covariance": GaussianCovarianceModel()},
+        protocol=protocol,
+        metric_configs=select_metric_configs_for_run(
+            [{"name": "crps"}, {"name": "energy_score"}, {"name": "mean_error"}],
+            has_reference_scenarios=True,
+            n_assets=3,
+            dataset_source="synthetic",
+        ),
+        runtime=RuntimeContext(seed=11),
+    )
+    results = benchmark.run(dataset)
+    metrics = results.metrics_frame()
+    assert "gaussian_covariance" in metrics.index
+    assert np.isfinite(metrics.loc["gaussian_covariance", "crps"])
+    assert np.isfinite(metrics.loc["gaussian_covariance", "energy_score"])
 
 
 def test_unconditional_generation_mode_smoke() -> None:

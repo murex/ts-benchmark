@@ -16,6 +16,7 @@ from functools import lru_cache
 from importlib import metadata
 from typing import Any, Callable, Iterable, Mapping, get_args, get_origin
 
+from ..builtins.gaussian_covariance import GaussianCovarianceModel
 from ..builtins.historical_bootstrap import HistoricalBootstrapModel
 from ..builtins.stochastic_vol_bootstrap import StochasticVolatilityBootstrapModel
 from ...serialization import to_jsonable
@@ -98,6 +99,7 @@ class PluginInfo:
 
 
 BUILTIN_MODEL_FACTORIES: dict[str, Callable[..., Any]] = {
+    "gaussian_covariance": GaussianCovarianceModel,
     "historical_bootstrap": HistoricalBootstrapModel,
     "stochastic_volatility_bootstrap": StochasticVolatilityBootstrapModel,
 }
@@ -113,6 +115,27 @@ def _package_version(package_name: str) -> str | None:
 _BUILTIN_PACKAGE_VERSION = _package_version("ts-benchmark") or "local"
 
 BUILTIN_MODEL_MANIFESTS: dict[str, ModelPluginManifest] = {
+    "gaussian_covariance": ModelPluginManifest(
+        name="gaussian_covariance",
+        display_name="Gaussian covariance",
+        version=_BUILTIN_PACKAGE_VERSION,
+        family="parametric",
+        description="Static multivariate Gaussian baseline fit from historical mean and covariance.",
+        runtime_device_hints=("cpu",),
+        supported_dataset_sources=("synthetic", "csv", "parquet"),
+        required_input="returns",
+        default_pipeline="raw",
+        tags=("baseline", "gaussian", "covariance", "monte-carlo"),
+        notes="Fits a single multivariate Gaussian distribution to benchmark-owned training returns.",
+        capabilities=PluginCapabilities(
+            multivariate=True,
+            probabilistic_sampling=True,
+            benchmark_protocol_contract=True,
+            explicit_preprocessing=True,
+            uses_benchmark_device=False,
+        ),
+        manifest_source="builtin",
+    ),
     "historical_bootstrap": ModelPluginManifest(
         name="historical_bootstrap",
         display_name="Historical bootstrap",

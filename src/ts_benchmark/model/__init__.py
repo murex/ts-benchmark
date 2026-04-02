@@ -9,6 +9,7 @@ _EXPORT_TO_MODULE = {
     "ExternalProcessScenarioModel": ".wrappers",
     "ForecastWindowCollection": ".contracts",
     "ForecastProtocol": "..benchmark",
+    "GaussianCovarianceModel": ".builtins",
     "HistoricalBootstrapModel": ".builtins",
     "ModelConfig": ".definition",
     "ModelExecutionConfig": ".definition",

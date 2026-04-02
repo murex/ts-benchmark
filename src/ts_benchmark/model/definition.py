@@ -198,6 +198,12 @@ class HistoricalBootstrapParams(_TypedConfigPayload):
 
 
 @dataclass(frozen=True)
+class GaussianCovarianceParams(_TypedConfigPayload):
+    covariance_jitter: float = 1e-6
+    use_empirical_mean: bool = True
+
+
+@dataclass(frozen=True)
 class StochasticVolatilityBootstrapParams(_TypedConfigPayload):
     ewma_lambda: float = 0.97
     block_size: int = 5
@@ -212,15 +218,23 @@ class DebugSmokeModelParams(_TypedConfigPayload):
 
 
 BUILTIN_MODEL_PARAM_TYPES: dict[tuple[str, str], type[_TypedConfigPayload]] = {
+    ("builtin", "gaussian_covariance"): GaussianCovarianceParams,
     ("builtin", "historical_bootstrap"): HistoricalBootstrapParams,
     ("builtin", "stochastic_volatility_bootstrap"): StochasticVolatilityBootstrapParams,
+    ("entrypoint", "ts_benchmark.model.builtins.gaussian_covariance:GaussianCovarianceModel"): GaussianCovarianceParams,
     ("entrypoint", "ts_benchmark.model.builtins.historical_bootstrap:HistoricalBootstrapModel"): HistoricalBootstrapParams,
     ("entrypoint", "ts_benchmark.model.builtins.stochastic_vol_bootstrap:StochasticVolatilityBootstrapModel"): StochasticVolatilityBootstrapParams,
     ("entrypoint", "ts_benchmark.model.builtins.debug_smoke_model:DebugSmokeModel"): DebugSmokeModelParams,
 }
 
 
-ModelParamValue = HistoricalBootstrapParams | StochasticVolatilityBootstrapParams | DebugSmokeModelParams | JsonObject
+ModelParamValue = (
+    GaussianCovarianceParams
+    | HistoricalBootstrapParams
+    | StochasticVolatilityBootstrapParams
+    | DebugSmokeModelParams
+    | JsonObject
+)
 
 
 def builtin_model_param_type(reference: ModelReferenceConfig) -> type[_TypedConfigPayload] | None:
